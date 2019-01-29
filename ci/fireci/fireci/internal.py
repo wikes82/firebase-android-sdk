@@ -20,6 +20,7 @@ import itertools
 import logging
 import os
 import shutil
+import sys
 
 from . import emulator
 from . import stats
@@ -116,6 +117,7 @@ def main(options, **kwargs):
 
        Should be the "main" entrypoint of the binary.
     """
+  _logger.info("Argv: %s", sys.argv)
   for k, v in kwargs.items():
     setattr(options, k, v)
   if options.enable_metrics:
