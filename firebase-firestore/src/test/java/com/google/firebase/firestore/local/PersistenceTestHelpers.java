@@ -15,41 +15,38 @@
 package com.google.firebase.firestore.local;
 
 import android.content.Context;
+import androidx.test.core.app.ApplicationProvider;
+import com.google.firebase.firestore.core.DatabaseInfo;
 import com.google.firebase.firestore.model.DatabaseId;
 import com.google.firebase.firestore.remote.RemoteSerializer;
-import org.robolectric.RuntimeEnvironment;
 
 public final class PersistenceTestHelpers {
 
   /** A counter for generating unique database names. */
   private static int databaseNameCounter = 0;
 
-  public static SQLitePersistence openSQLitePersistence(String name) {
-    return openSQLitePersistence(name, LruGarbageCollector.Params.Default());
-  }
-
-  public static SQLitePersistence openSQLitePersistence(
-      String name, LruGarbageCollector.Params params) {
-    DatabaseId databaseId = DatabaseId.forProject("projectId");
-    LocalSerializer serializer = new LocalSerializer(new RemoteSerializer(databaseId));
-    Context context = RuntimeEnvironment.application;
-    SQLitePersistence persistence =
-        new SQLitePersistence(context, name, databaseId, serializer, params);
-    persistence.start();
-    return persistence;
-  }
-
   public static String nextSQLiteDatabaseName() {
     return "test-" + databaseNameCounter++;
   }
 
+  public static DatabaseInfo nextDatabaseInfo() {
+    return new DatabaseInfo(
+        DatabaseId.forDatabase("project", "database"),
+        nextSQLiteDatabaseName(),
+        "localhost",
+        /* sslEnabled= */ false);
+  }
+
+  public static SQLitePersistence createSQLitePersistence(String name) {
+    return openSQLitePersistence(name, LruGarbageCollector.Params.Default());
+  }
   /**
    * Creates and starts a new SQLitePersistence instance for testing.
    *
    * @return a new SQLitePersistence with an empty database and an up-to-date schema.
    */
   public static SQLitePersistence createSQLitePersistence() {
-    return createSQLitePersistence(LruGarbageCollector.Params.Default());
+    return openSQLitePersistence(nextSQLiteDatabaseName(), LruGarbageCollector.Params.Default());
   }
 
   public static SQLitePersistence createSQLitePersistence(LruGarbageCollector.Params params) {
@@ -66,15 +63,22 @@ public final class PersistenceTestHelpers {
     return persistence;
   }
 
-  public static MemoryPersistence createLRUMemoryPersistence() {
-    return createLRUMemoryPersistence(LruGarbageCollector.Params.Default());
-  }
-
   public static MemoryPersistence createLRUMemoryPersistence(LruGarbageCollector.Params params) {
     DatabaseId databaseId = DatabaseId.forProject("projectId");
     LocalSerializer serializer = new LocalSerializer(new RemoteSerializer(databaseId));
     MemoryPersistence persistence =
         MemoryPersistence.createLruGcMemoryPersistence(params, serializer);
+    persistence.start();
+    return persistence;
+  }
+
+  private static SQLitePersistence openSQLitePersistence(
+      String name, LruGarbageCollector.Params params) {
+    DatabaseId databaseId = DatabaseId.forProject("projectId");
+    LocalSerializer serializer = new LocalSerializer(new RemoteSerializer(databaseId));
+    Context context = ApplicationProvider.getApplicationContext();
+    SQLitePersistence persistence =
+        new SQLitePersistence(context, name, databaseId, serializer, params);
     persistence.start();
     return persistence;
   }

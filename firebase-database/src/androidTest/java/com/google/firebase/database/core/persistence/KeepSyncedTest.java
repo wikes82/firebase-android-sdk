@@ -16,13 +16,13 @@ package com.google.firebase.database.core.persistence;
 
 import static org.junit.Assert.assertEquals;
 
-import android.support.test.runner.AndroidJUnit4;
+import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.google.firebase.database.DatabaseReference;
 import com.google.firebase.database.EventRecord;
+import com.google.firebase.database.IntegrationTestHelpers;
 import com.google.firebase.database.MapBuilder;
 import com.google.firebase.database.Query;
 import com.google.firebase.database.RetryRule;
-import com.google.firebase.database.TestHelpers;
 import com.google.firebase.database.future.ReadFuture;
 import com.google.firebase.database.future.WriteFuture;
 import java.util.List;
@@ -38,7 +38,7 @@ public class KeepSyncedTest {
 
   @After
   public void tearDown() {
-    TestHelpers.failOnFirstUncaughtException();
+    IntegrationTestHelpers.failOnFirstUncaughtException();
   }
 
   static long globalKeepSyncedTestCounter = 0;
@@ -57,12 +57,10 @@ public class KeepSyncedTest {
 
     new ReadFuture(
             query,
-            new ReadFuture.CompletionCondition() {
-              public boolean isComplete(List<EventRecord> events) {
-                assertEquals(1, events.size());
-                assertEquals(value, events.get(0).getSnapshot().getValue());
-                return true;
-              }
+            (List<EventRecord> events) -> {
+              assertEquals(1, events.size());
+              assertEquals(value, events.get(0).getSnapshot().getValue());
+              return true;
             })
         .timedGet();
 
@@ -89,13 +87,11 @@ public class KeepSyncedTest {
     ReadFuture readFuture =
         new ReadFuture(
             query,
-            new ReadFuture.CompletionCondition() {
-              public boolean isComplete(List<EventRecord> events) {
-                // We expect this to get called with the next value, not the old value.
-                assertEquals(1, events.size());
-                assertEquals(nextValue, events.get(0).getSnapshot().getValue());
-                return true;
-              }
+            (List<EventRecord> events) -> {
+              // We expect this to get called with the next value, not the old value.
+              assertEquals(1, events.size());
+              assertEquals(nextValue, events.get(0).getSnapshot().getValue());
+              return true;
             });
 
     // By now, if we had it synced we should have gotten an event with the wrong value
@@ -109,7 +105,7 @@ public class KeepSyncedTest {
 
   @Test
   public void keepSynced() throws Exception {
-    DatabaseReference ref = TestHelpers.getRandomNode();
+    DatabaseReference ref = IntegrationTestHelpers.getRandomNode();
     ref.keepSynced(true);
     assertIsKeptSynced(ref);
 
@@ -120,7 +116,7 @@ public class KeepSyncedTest {
   // NOTE: This is not ideal behavior and should be fixed in a future release
   @Test
   public void keepSyncedAffectsQueries() throws Exception {
-    DatabaseReference ref = TestHelpers.getRandomNode();
+    DatabaseReference ref = IntegrationTestHelpers.getRandomNode();
     ref.keepSynced(true);
     Query query = ref.limitToFirst(5);
     query.keepSynced(true);
@@ -135,7 +131,7 @@ public class KeepSyncedTest {
 
   @Test
   public void manyKeepSyncedCallsDontAccumulate() throws Exception {
-    DatabaseReference ref = TestHelpers.getRandomNode();
+    DatabaseReference ref = IntegrationTestHelpers.getRandomNode();
 
     ref.keepSynced(true);
     ref.keepSynced(true);
@@ -160,20 +156,13 @@ public class KeepSyncedTest {
 
   @Test
   public void removeSingleListenerDoesNotAffectKeepSynced() throws Exception {
-    DatabaseReference ref = TestHelpers.getRandomNode();
+    DatabaseReference ref = IntegrationTestHelpers.getRandomNode();
 
     ref.keepSynced(true);
     assertIsKeptSynced(ref);
 
     // This will add and remove a listener.
-    new ReadFuture(
-            ref,
-            new ReadFuture.CompletionCondition() {
-              public boolean isComplete(List<EventRecord> events) {
-                return true;
-              }
-            })
-        .timedGet();
+    new ReadFuture(ref, (List<EventRecord> events) -> true).timedGet();
 
     assertIsKeptSynced(ref);
 
@@ -183,7 +172,7 @@ public class KeepSyncedTest {
 
   @Test
   public void keepSyncedNoDoesNotAffectExistingListener() throws Exception {
-    DatabaseReference ref = TestHelpers.getRandomNode();
+    DatabaseReference ref = IntegrationTestHelpers.getRandomNode();
 
     ref.keepSynced(true);
     assertIsKeptSynced(ref);
@@ -208,7 +197,7 @@ public class KeepSyncedTest {
 
   @Test
   public void differentQueriesAreIndependent() throws Exception {
-    DatabaseReference ref = TestHelpers.getRandomNode();
+    DatabaseReference ref = IntegrationTestHelpers.getRandomNode();
     Query query1 = ref.limitToFirst(1);
     Query query2 = ref.limitToFirst(2);
 
@@ -231,7 +220,7 @@ public class KeepSyncedTest {
 
   @Test
   public void childIsKeptSynced() throws Exception {
-    DatabaseReference ref = TestHelpers.getRandomNode();
+    DatabaseReference ref = IntegrationTestHelpers.getRandomNode();
     DatabaseReference child = ref.child("random-child");
 
     ref.keepSynced(true);
@@ -243,7 +232,7 @@ public class KeepSyncedTest {
 
   @Test
   public void rootIsKeptSynced() throws Exception {
-    DatabaseReference ref = TestHelpers.getRandomNode().getRoot();
+    DatabaseReference ref = IntegrationTestHelpers.getRandomNode().getRoot();
 
     ref.keepSynced(true);
     assertIsKeptSynced(ref);

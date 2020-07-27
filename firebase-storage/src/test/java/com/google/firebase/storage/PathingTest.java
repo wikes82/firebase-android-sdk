@@ -24,41 +24,40 @@ import com.google.firebase.FirebaseOptions;
 import com.google.firebase.storage.internal.MockClockHelper;
 import com.google.firebase.storage.internal.RobolectricThreadFix;
 import com.google.firebase.testing.FirebaseAppRule;
-import junit.framework.Assert;
 import org.junit.After;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.mockito.MockitoAnnotations;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
 
 /** Tests for {@link FirebaseStorage}. */
 @RunWith(RobolectricTestRunner.class)
-@Config(manifest = Config.NONE, sdk = Build.VERSION_CODES.LOLLIPOP_MR1)
+@Config(sdk = Build.VERSION_CODES.LOLLIPOP_MR1)
 public class PathingTest {
 
   @Rule public RetryRule retryRule = new RetryRule(3);
   @Rule public FirebaseAppRule firebaseAppRule = new FirebaseAppRule();
 
+  FirebaseApp app;
+
   @Before
   public void setUp() throws Exception {
     RobolectricThreadFix.install();
-    FirebaseApp.initializeApp(
-        RuntimeEnvironment.application.getApplicationContext(),
-        new FirebaseOptions.Builder()
-            .setApiKey("AIzaSyCkEhVjf3pduRDt6d1yKOMitrUEke8agEM")
-            .setApplicationId("fooey")
-            .build());
     MockClockHelper.install();
-    MockitoAnnotations.initMocks(this);
+    app =
+        FirebaseApp.initializeApp(
+            RuntimeEnvironment.application.getApplicationContext(),
+            new FirebaseOptions.Builder().setApiKey("fooey").setApplicationId("fooey").build());
   }
 
   @After
   public void tearDown() {
-    TestUtil.unInit();
+    FirebaseStorageComponent component = app.get(FirebaseStorageComponent.class);
+    component.clearInstancesForTesting();
   }
 
   @Test
@@ -165,7 +164,7 @@ public class PathingTest {
         FirebaseStorage.getInstance()
             .getReferenceFromUrl("gs://benwu-test1" + ".storage.firebase.com/child/../");
 
-    assertEquals(ref.getName(), "..");
+    assertEquals("..", ref.getName());
   }
 
   @Test
@@ -185,7 +184,7 @@ public class PathingTest {
         FirebaseStorage.getInstance()
             .getReferenceFromUrl("gs://benwu-test1" + ".storage.firebase.com/child/image.png");
 
-    assertEquals(ref.getName(), "image.png");
+    assertEquals("image.png", ref.getName());
   }
 
   @Test
@@ -194,7 +193,7 @@ public class PathingTest {
         FirebaseStorage.getInstance()
             .getReferenceFromUrl("gs://benwu-test1" + ".storage.firebase.com/image.png");
 
-    assertEquals(ref.getName(), "image.png");
+    assertEquals("image.png", ref.getName());
   }
 
   @Test

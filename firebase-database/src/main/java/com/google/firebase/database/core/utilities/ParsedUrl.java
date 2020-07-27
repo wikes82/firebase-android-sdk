@@ -17,8 +17,26 @@ package com.google.firebase.database.core.utilities;
 import com.google.firebase.database.core.Path;
 import com.google.firebase.database.core.RepoInfo;
 
-public class ParsedUrl {
+public final class ParsedUrl {
 
   public RepoInfo repoInfo;
   public Path path;
+
+  @Override
+  public boolean equals(Object o) {
+    if (this == o) return true;
+    if (o == null || getClass() != o.getClass()) return false;
+
+    ParsedUrl parsedUrl = (ParsedUrl) o;
+
+    if (!repoInfo.equals(parsedUrl.repoInfo)) return false;
+    return path.equals(parsedUrl.path);
+  }
+
+  @Override
+  public int hashCode() {
+    int result = repoInfo.hashCode();
+    result = 31 * result + path.hashCode();
+    return result;
+  }
 }

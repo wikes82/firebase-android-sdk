@@ -19,13 +19,14 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
-import android.support.test.runner.AndroidJUnit4;
+import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.google.firebase.database.core.DatabaseConfig;
 import com.google.firebase.database.core.RepoManager;
 import com.google.firebase.database.future.ReadFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import org.junit.After;
+import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
 
@@ -35,11 +36,11 @@ public class InfoTest {
 
   @After
   public void tearDown() {
-    TestHelpers.failOnFirstUncaughtException();
+    IntegrationTestHelpers.failOnFirstUncaughtException();
   }
 
   private DatabaseReference getRootNode() throws DatabaseException {
-    return TestHelpers.getRandomNode().getRoot();
+    return IntegrationTestHelpers.getRandomNode().getRoot();
   }
 
   @Test
@@ -50,7 +51,7 @@ public class InfoTest {
     assertEquals(
         IntegrationTestValues.getNamespace() + "/.info/foo", root.child(".info/foo").toString());
 
-    DatabaseConfig ctx = TestHelpers.getContext(0);
+    DatabaseConfig ctx = IntegrationTestHelpers.getContext(0);
     DatabaseReference ref =
         new DatabaseReference(IntegrationTestValues.getNamespace() + "/.info", ctx);
     assertEquals(IntegrationTestValues.getNamespace() + "/.info", ref.toString());
@@ -132,7 +133,7 @@ public class InfoTest {
   @Test
   public void testManualConnectionManagementWorks()
       throws DatabaseException, TestFailure, TimeoutException, InterruptedException {
-    DatabaseReference ref = TestHelpers.getRandomNode();
+    DatabaseReference ref = IntegrationTestHelpers.getRandomNode();
 
     // Wait until we're connected to the database
     ReadFuture.untilEquals(ref.getRoot().child(".info/connected"), true).timedGet();
@@ -150,7 +151,7 @@ public class InfoTest {
     try {
       ReadFuture.untilEquals(refDup.child(".info/connected"), true)
           .timedGet(1500, TimeUnit.MILLISECONDS);
-      assert (false); // We should never get here!
+      Assert.fail();
     } catch (TimeoutException e) { //
     }
 
@@ -167,7 +168,7 @@ public class InfoTest {
     // Wait until we're connected
     ReadFuture.untilEquals(ref.child(".info/connected"), true).timedGet();
 
-    DatabaseConfig ctx = TestHelpers.getContext(0);
+    DatabaseConfig ctx = IntegrationTestHelpers.getContext(0);
     RepoManager.interrupt(ctx);
 
     DataSnapshot snap =

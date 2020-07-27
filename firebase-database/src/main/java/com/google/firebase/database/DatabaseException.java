@@ -14,13 +14,12 @@
 
 package com.google.firebase.database;
 
-import com.google.firebase.annotations.PublicApi;
+import androidx.annotation.RestrictTo;
 
 /**
  * This error is thrown when the Firebase Database library is unable to operate on the input it has
  * been given.
  */
-@PublicApi
 public class DatabaseException extends RuntimeException {
 
   /**
@@ -29,6 +28,7 @@ public class DatabaseException extends RuntimeException {
    * @hide
    * @param message A human readable description of the error
    */
+  @RestrictTo(RestrictTo.Scope.LIBRARY_GROUP)
   public DatabaseException(String message) {
     super(message);
   }
@@ -40,6 +40,7 @@ public class DatabaseException extends RuntimeException {
    * @param message A human readable description of the error
    * @param cause The underlying cause for this error
    */
+  @RestrictTo(RestrictTo.Scope.LIBRARY_GROUP)
   public DatabaseException(String message, Throwable cause) {
     super(message, cause);
   }

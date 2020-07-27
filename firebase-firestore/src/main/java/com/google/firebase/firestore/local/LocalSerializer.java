@@ -18,22 +18,20 @@ import static com.google.firebase.firestore.util.Assert.fail;
 import static com.google.firebase.firestore.util.Assert.hardAssert;
 
 import com.google.firebase.Timestamp;
-import com.google.firebase.firestore.core.Query;
+import com.google.firebase.firestore.core.Target;
 import com.google.firebase.firestore.model.Document;
 import com.google.firebase.firestore.model.DocumentKey;
 import com.google.firebase.firestore.model.MaybeDocument;
 import com.google.firebase.firestore.model.NoDocument;
+import com.google.firebase.firestore.model.ObjectValue;
 import com.google.firebase.firestore.model.SnapshotVersion;
 import com.google.firebase.firestore.model.UnknownDocument;
 import com.google.firebase.firestore.model.mutation.Mutation;
 import com.google.firebase.firestore.model.mutation.MutationBatch;
-import com.google.firebase.firestore.model.value.FieldValue;
-import com.google.firebase.firestore.model.value.ObjectValue;
 import com.google.firebase.firestore.remote.RemoteSerializer;
 import com.google.protobuf.ByteString;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 
 /** Serializer for values stored in the LocalStore. */
 public final class LocalSerializer {
@@ -55,12 +53,7 @@ public final class LocalSerializer {
       builder.setHasCommittedMutations(noDocument.hasCommittedMutations());
     } else if (document instanceof Document) {
       Document existingDocument = (Document) document;
-      // Use the memoized encoded form if it exists.
-      if (existingDocument.getProto() != null) {
-        builder.setDocument(existingDocument.getProto());
-      } else {
-        builder.setDocument(encodeDocument(existingDocument));
-      }
+      builder.setDocument(encodeDocument(existingDocument));
       builder.setHasCommittedMutations(existingDocument.hasCommittedMutations());
     } else if (document instanceof UnknownDocument) {
       builder.setUnknownDocument(encodeUnknownDocument((UnknownDocument) document));
@@ -97,12 +90,7 @@ public final class LocalSerializer {
     com.google.firestore.v1.Document.Builder builder =
         com.google.firestore.v1.Document.newBuilder();
     builder.setName(rpcSerializer.encodeKey(document.getKey()));
-
-    ObjectValue value = document.getData();
-    for (Map.Entry<String, FieldValue> entry : value.getInternalValue()) {
-      builder.putFields(entry.getKey(), rpcSerializer.encodeValue(entry.getValue()));
-    }
-
+    builder.putAllFields(document.getData().getFieldsMap());
     Timestamp updateTime = document.getVersion().getTimestamp();
     builder.setUpdateTime(rpcSerializer.encodeTimestamp(updateTime));
     return builder.build();
@@ -112,12 +100,11 @@ public final class LocalSerializer {
   private Document decodeDocument(
       com.google.firestore.v1.Document document, boolean hasCommittedMutations) {
     DocumentKey key = rpcSerializer.decodeKey(document.getName());
-    ObjectValue value = rpcSerializer.decodeFields(document.getFieldsMap());
     SnapshotVersion version = rpcSerializer.decodeVersion(document.getUpdateTime());
     return new Document(
         key,
         version,
-        value,
+        ObjectValue.fromMap(document.getFieldsMap()),
         hasCommittedMutations
             ? Document.DocumentState.COMMITTED_MUTATIONS
             : Document.DocumentState.SYNCED);
@@ -165,6 +152,9 @@ public final class LocalSerializer {
 
     result.setBatchId(batch.getBatchId());
     result.setLocalWriteTime(rpcSerializer.encodeTimestamp(batch.getLocalWriteTime()));
+    for (Mutation mutation : batch.getBaseMutations()) {
+      result.addBaseWrites(rpcSerializer.encodeMutation(mutation));
+    }
     for (Mutation mutation : batch.getMutations()) {
       result.addWrites(rpcSerializer.encodeMutation(mutation));
     }
@@ -176,62 +166,76 @@ public final class LocalSerializer {
     int batchId = batch.getBatchId();
     Timestamp localWriteTime = rpcSerializer.decodeTimestamp(batch.getLocalWriteTime());
 
-    int count = batch.getWritesCount();
-    List<Mutation> mutations = new ArrayList<>(count);
-    for (int i = 0; i < count; i++) {
+    int baseMutationsCount = batch.getBaseWritesCount();
+    List<Mutation> baseMutations = new ArrayList<>(baseMutationsCount);
+    for (int i = 0; i < baseMutationsCount; i++) {
+      baseMutations.add(rpcSerializer.decodeMutation(batch.getBaseWrites(i)));
+    }
+    int mutationsCount = batch.getWritesCount();
+    List<Mutation> mutations = new ArrayList<>(mutationsCount);
+    for (int i = 0; i < mutationsCount; i++) {
       mutations.add(rpcSerializer.decodeMutation(batch.getWrites(i)));
     }
-
-    return new MutationBatch(batchId, localWriteTime, mutations);
+    return new MutationBatch(batchId, localWriteTime, baseMutations, mutations);
   }
 
-  com.google.firebase.firestore.proto.Target encodeQueryData(QueryData queryData) {
+  com.google.firebase.firestore.proto.Target encodeTargetData(TargetData targetData) {
     hardAssert(
-        QueryPurpose.LISTEN.equals(queryData.getPurpose()),
+        QueryPurpose.LISTEN.equals(targetData.getPurpose()),
         "Only queries with purpose %s may be stored, got %s",
         QueryPurpose.LISTEN,
-        queryData.getPurpose());
+        targetData.getPurpose());
 
     com.google.firebase.firestore.proto.Target.Builder result =
         com.google.firebase.firestore.proto.Target.newBuilder();
 
     result
-        .setTargetId(queryData.getTargetId())
-        .setLastListenSequenceNumber(queryData.getSequenceNumber())
-        .setSnapshotVersion(rpcSerializer.encodeVersion(queryData.getSnapshotVersion()))
-        .setResumeToken(queryData.getResumeToken());
+        .setTargetId(targetData.getTargetId())
+        .setLastListenSequenceNumber(targetData.getSequenceNumber())
+        .setLastLimboFreeSnapshotVersion(
+            rpcSerializer.encodeVersion(targetData.getLastLimboFreeSnapshotVersion()))
+        .setSnapshotVersion(rpcSerializer.encodeVersion(targetData.getSnapshotVersion()))
+        .setResumeToken(targetData.getResumeToken());
 
-    Query query = queryData.getQuery();
-    if (query.isDocumentQuery()) {
-      result.setDocuments(rpcSerializer.encodeDocumentsTarget(query));
+    Target target = targetData.getTarget();
+    if (target.isDocumentQuery()) {
+      result.setDocuments(rpcSerializer.encodeDocumentsTarget(target));
     } else {
-      result.setQuery(rpcSerializer.encodeQueryTarget(query));
+      result.setQuery(rpcSerializer.encodeQueryTarget(target));
     }
 
     return result.build();
   }
 
-  QueryData decodeQueryData(com.google.firebase.firestore.proto.Target target) {
-    int targetId = target.getTargetId();
-    SnapshotVersion version = rpcSerializer.decodeVersion(target.getSnapshotVersion());
-    ByteString resumeToken = target.getResumeToken();
-    long sequenceNumber = target.getLastListenSequenceNumber();
+  TargetData decodeTargetData(com.google.firebase.firestore.proto.Target targetProto) {
+    int targetId = targetProto.getTargetId();
+    SnapshotVersion version = rpcSerializer.decodeVersion(targetProto.getSnapshotVersion());
+    SnapshotVersion lastLimboFreeSnapshotVersion =
+        rpcSerializer.decodeVersion(targetProto.getLastLimboFreeSnapshotVersion());
+    ByteString resumeToken = targetProto.getResumeToken();
+    long sequenceNumber = targetProto.getLastListenSequenceNumber();
 
-    Query query;
-    switch (target.getTargetTypeCase()) {
+    Target target;
+    switch (targetProto.getTargetTypeCase()) {
       case DOCUMENTS:
-        query = rpcSerializer.decodeDocumentsTarget(target.getDocuments());
+        target = rpcSerializer.decodeDocumentsTarget(targetProto.getDocuments());
         break;
 
       case QUERY:
-        query = rpcSerializer.decodeQueryTarget(target.getQuery());
+        target = rpcSerializer.decodeQueryTarget(targetProto.getQuery());
         break;
 
       default:
-        throw fail("Unknown targetType %d", target.getTargetTypeCase());
+        throw fail("Unknown targetType %d", targetProto.getTargetTypeCase());
     }
 
-    return new QueryData(
-        query, targetId, sequenceNumber, QueryPurpose.LISTEN, version, resumeToken);
+    return new TargetData(
+        target,
+        targetId,
+        sequenceNumber,
+        QueryPurpose.LISTEN,
+        version,
+        lastLimboFreeSnapshotVersion,
+        resumeToken);
   }
 }

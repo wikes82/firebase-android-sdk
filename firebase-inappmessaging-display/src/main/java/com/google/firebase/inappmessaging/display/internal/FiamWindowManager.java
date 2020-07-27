@@ -20,13 +20,13 @@ import android.graphics.PixelFormat;
 import android.graphics.Point;
 import android.graphics.Rect;
 import android.os.Build;
-import android.support.annotation.NonNull;
 import android.view.Display;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
+import androidx.annotation.NonNull;
 import com.google.firebase.inappmessaging.display.internal.bindingwrappers.BindingWrapper;
 import javax.inject.Inject;
 import javax.inject.Singleton;
@@ -81,7 +81,10 @@ public class FiamWindowManager {
   }
 
   public boolean isFiamDisplayed() {
-    return bindingWrapper != null;
+    if (bindingWrapper == null) {
+      return false;
+    }
+    return bindingWrapper.getRootView().isShown();
   }
 
   /** Removes the in app message from the surrounding window */

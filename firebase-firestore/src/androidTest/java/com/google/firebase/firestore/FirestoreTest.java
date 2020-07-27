@@ -15,39 +15,49 @@
 package com.google.firebase.firestore;
 
 import static com.google.firebase.firestore.AccessHelper.getAsyncQueue;
+import static com.google.firebase.firestore.testutil.IntegrationTestUtil.newTestSettings;
+import static com.google.firebase.firestore.testutil.IntegrationTestUtil.provider;
+import static com.google.firebase.firestore.testutil.IntegrationTestUtil.testChangeUserTo;
 import static com.google.firebase.firestore.testutil.IntegrationTestUtil.testCollection;
 import static com.google.firebase.firestore.testutil.IntegrationTestUtil.testCollectionWithDocs;
 import static com.google.firebase.firestore.testutil.IntegrationTestUtil.testDocument;
+import static com.google.firebase.firestore.testutil.IntegrationTestUtil.testFirebaseApp;
 import static com.google.firebase.firestore.testutil.IntegrationTestUtil.testFirestore;
 import static com.google.firebase.firestore.testutil.IntegrationTestUtil.waitFor;
 import static com.google.firebase.firestore.testutil.IntegrationTestUtil.waitForException;
 import static com.google.firebase.firestore.testutil.IntegrationTestUtil.waitForOnlineSnapshot;
 import static com.google.firebase.firestore.testutil.TestUtil.expectError;
 import static com.google.firebase.firestore.testutil.TestUtil.map;
-import static junit.framework.Assert.assertEquals;
-import static junit.framework.Assert.assertFalse;
-import static junit.framework.Assert.assertNotNull;
-import static junit.framework.Assert.assertNull;
-import static junit.framework.Assert.assertSame;
-import static junit.framework.Assert.assertTrue;
-import static junit.framework.Assert.fail;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNotSame;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
-import android.support.test.runner.AndroidJUnit4;
+import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.google.android.gms.tasks.Task;
 import com.google.android.gms.tasks.TaskCompletionSource;
+import com.google.firebase.FirebaseApp;
 import com.google.firebase.Timestamp;
 import com.google.firebase.firestore.FirebaseFirestoreException.Code;
 import com.google.firebase.firestore.Query.Direction;
+import com.google.firebase.firestore.auth.User;
 import com.google.firebase.firestore.testutil.EventAccumulator;
 import com.google.firebase.firestore.testutil.IntegrationTestUtil;
 import com.google.firebase.firestore.util.AsyncQueue.TimerId;
+import com.google.firebase.firestore.util.Logger.Level;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Semaphore;
 import org.junit.After;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -88,7 +98,7 @@ public class FirestoreTest {
       fail("Should have thrown exception");
     } catch (RuntimeException e) {
       assertEquals(
-          ((FirebaseFirestoreException) e.getCause().getCause()).getCode(), Code.UNAVAILABLE);
+          Code.UNAVAILABLE, ((FirebaseFirestoreException) e.getCause().getCause()).getCode());
     }
     writerSnap = waitFor(writerRef.get());
     assertEquals(map("a", "a", "b", "b"), writerSnap.getData());
@@ -157,6 +167,26 @@ public class FirestoreTest {
     snapshot = waitFor(documentReference.get(Source.SERVER));
     assertEquals(map("a", Collections.emptyMap(), "b", Collections.emptyMap()), snapshot.getData());
     listenerRegistration.remove();
+  }
+
+  @Test
+  public void testUpdateWithEmptyObjectReplacesAllFields() {
+    DocumentReference documentReference = testDocument();
+    documentReference.set(map("a", "a"));
+
+    waitFor(documentReference.update("a", Collections.emptyMap()));
+    DocumentSnapshot snapshot = waitFor(documentReference.get());
+    assertEquals(map("a", Collections.emptyMap()), snapshot.getData());
+  }
+
+  @Test
+  public void testMergeWithEmptyObjectReplacesAllFields() {
+    DocumentReference documentReference = testDocument();
+    documentReference.set(map("a", "a"));
+
+    waitFor(documentReference.set(map("a", Collections.emptyMap()), SetOptions.merge()));
+    DocumentSnapshot snapshot = waitFor(documentReference.get());
+    assertEquals(map("a", Collections.emptyMap()), snapshot.getData());
   }
 
   @Test
@@ -502,30 +532,82 @@ public class FirestoreTest {
   }
 
   @Test
+  public void testSnapshotsInSyncListenerFiresAfterListenersInSync() {
+    Map<String, Object> data = map("foo", 1.0);
+    CollectionReference collection = testCollection();
+    DocumentReference documentReference = waitFor(collection.add(data));
+    List<String> events = new ArrayList<>();
+
+    Semaphore gotInitialSnapshot = new Semaphore(0);
+    Semaphore done = new Semaphore(0);
+
+    ListenerRegistration listenerRegistration = null;
+
+    documentReference.addSnapshotListener(
+        (value, error) -> {
+          events.add("doc");
+          gotInitialSnapshot.release();
+        });
+    waitFor(gotInitialSnapshot);
+    events.clear();
+
+    try {
+      listenerRegistration =
+          documentReference
+              .getFirestore()
+              .addSnapshotsInSyncListener(
+                  () -> {
+                    events.add("snapshots-in-sync");
+                    if (events.size() == 3) {
+                      // We should have an initial snapshots-in-sync event, then a snapshot event
+                      // for set(), then another event to indicate we're in sync again.
+                      assertEquals(
+                          Arrays.asList("snapshots-in-sync", "doc", "snapshots-in-sync"), events);
+                      done.release();
+                    }
+                  });
+      waitFor(documentReference.set(map("foo", 3.0)));
+      waitFor(done);
+    } finally {
+      if (listenerRegistration != null) {
+        listenerRegistration.remove();
+      }
+    }
+  }
+
+  @Test
   public void testQueriesAreValidatedOnClient() {
     // NOTE: Failure cases are validated in ValidationTest.
     CollectionReference collection = testCollection();
     final Query query = collection.whereGreaterThanOrEqualTo("x", 32);
-    // Same inequality field works;
+    // Same inequality field works.
     query.whereLessThanOrEqualTo("x", "cat");
-    // Equality on different field works;
+    // Equality on different field works.
     query.whereEqualTo("y", "cat");
-    // Array contains on different field works;
+    // Array contains on different field works.
     query.whereArrayContains("y", "cat");
+    // Array contains any on different field works.
+    query.whereArrayContainsAny("y", Arrays.asList("cat"));
+    // In on different field works.
+    query.whereIn("y", Arrays.asList("cat"));
 
     // Ordering by inequality field succeeds.
     query.orderBy("x");
     collection.orderBy("x").whereGreaterThanOrEqualTo("x", 32);
 
-    // inequality same as first order by works
+    // Inequality same as first order by works.
     query.orderBy("x").orderBy("y");
     collection.orderBy("x").orderBy("y").whereGreaterThanOrEqualTo("x", 32);
     collection.orderBy("x", Direction.DESCENDING).whereEqualTo("y", "true");
 
-    // Equality different than orderBy works
+    // Equality different than orderBy works.
     collection.orderBy("x").whereEqualTo("y", "cat");
-    // Array contains different than orderBy works
+    // Array contains different than orderBy works.
     collection.orderBy("x").whereArrayContains("y", "cat");
+    // Array contains any different than orderBy works.
+    collection.orderBy("x").whereArrayContainsAny("y", Arrays.asList("cat"));
+    // In different than orderBy works.
+    collection.orderBy("x").whereIn("y", Arrays.asList("cat"));
   }
 
   @Test
@@ -952,5 +1034,211 @@ public class FirestoreTest {
     waitFor(firestore.disableNetwork());
     waitFor(firestore.disableNetwork());
     waitFor(firestore.enableNetwork());
+  }
+
+  @Test
+  public void testClientCallsAfterTerminateFails() {
+    FirebaseFirestore firestore = testFirestore();
+    waitFor(firestore.terminate());
+    expectError(
+        () -> waitFor(firestore.disableNetwork()), "The client has already been terminated");
+  }
+
+  @Test
+  public void testMaintainsPersistenceAfterRestarting() {
+    FirebaseFirestore firestore =
+        testFirestore(provider().projectId(), Level.DEBUG, newTestSettings(), "dbPersistenceKey");
+    DocumentReference docRef = firestore.collection("col1").document("doc1");
+    waitFor(docRef.set(map("foo", "bar")));
+    waitFor(firestore.terminate());
+    IntegrationTestUtil.removeFirestore(firestore);
+
+    // We restart the app with the same name and options to check that the previous instance's
+    // persistent storage is actually cleared after the restart. Calling testFirestore() without the
+    // parameters would create a new instance of firestore, which defeats the purpose of this test.
+    FirebaseFirestore firestore2 =
+        testFirestore(provider().projectId(), Level.DEBUG, newTestSettings(), "dbPersistenceKey");
+    DocumentReference docRef2 = firestore2.document(docRef.getPath());
+    DocumentSnapshot doc = waitFor(docRef2.get());
+    assertTrue(doc.exists());
+  }
+
+  @Test
+  public void testCanClearPersistenceAfterRestarting() throws Exception {
+    FirebaseFirestore firestore =
+        testFirestore(provider().projectId(), Level.DEBUG, newTestSettings(), "dbPersistenceKey");
+    DocumentReference docRef = firestore.collection("col1").document("doc1");
+    waitFor(docRef.set(map("foo", "bar")));
+    waitFor(firestore.terminate());
+    IntegrationTestUtil.removeFirestore(firestore);
+    waitFor(AccessHelper.clearPersistence(firestore));
+
+    // We restart the app with the same name and options to check that the previous instance's
+    // persistent storage is actually cleared after the restart. Calling testFirestore() without the
+    // parameters would create a new instance of firestore, which defeats the purpose of this test.
+    FirebaseFirestore firestore2 =
+        testFirestore(provider().projectId(), Level.DEBUG, newTestSettings(), "dbPersistenceKey");
+    DocumentReference docRef2 = firestore2.document(docRef.getPath());
+    Exception e = waitForException(docRef2.get(Source.CACHE));
+    assertEquals(Code.UNAVAILABLE, ((FirebaseFirestoreException) e).getCode());
+  }
+
+  @Test
+  public void testClearPersistenceWhileRunningFails() {
+    FirebaseFirestore firestore = testFirestore();
+    waitFor(firestore.enableNetwork());
+
+    Task<Void> transactionTask = AccessHelper.clearPersistence(firestore);
+    waitForException(transactionTask);
+    assertFalse(transactionTask.isSuccessful());
+    Exception e = transactionTask.getException();
+    FirebaseFirestoreException firestoreException = (FirebaseFirestoreException) e;
+    assertEquals(Code.FAILED_PRECONDITION, firestoreException.getCode());
+  }
+
+  @Test
+  public void testRestartFirestoreLeadsToNewInstance() {
+    FirebaseApp app = testFirebaseApp();
+    FirebaseFirestore instance = FirebaseFirestore.getInstance(app);
+    instance.setFirestoreSettings(newTestSettings());
+    FirebaseFirestore sameInstance = FirebaseFirestore.getInstance(app);
+
+    assertSame(instance, sameInstance);
+    waitFor(instance.document("abc/123").set(Collections.singletonMap("field", 100L)));
+
+    instance.terminate();
+    FirebaseFirestore newInstance = FirebaseFirestore.getInstance(app);
+    newInstance.setFirestoreSettings(newTestSettings());
+
+    // Verify new instance works.
+    DocumentSnapshot doc = waitFor(newInstance.document("abc/123").get());
+    assertEquals(100L, doc.get("field"));
+    waitFor(newInstance.document("abc/123").delete());
+
+    // Verify it is different instance.
+    assertNotSame(instance, newInstance);
+  }
+
+  @Test
+  public void testAppDeleteLeadsToFirestoreTerminate() {
+    FirebaseApp app = testFirebaseApp();
+    FirebaseFirestore instance = FirebaseFirestore.getInstance(app);
+    instance.setFirestoreSettings(newTestSettings());
+    waitFor(instance.document("abc/123").set(Collections.singletonMap("Field", 100)));
+
+    app.delete();
+
+    assertTrue(instance.getClient().isTerminated());
+  }
+
+  @Test
+  public void testNewOperationThrowsAfterFirestoreTerminate() {
+    FirebaseFirestore instance = testFirestore();
+    DocumentReference reference = instance.document("abc/123");
+    waitFor(reference.set(Collections.singletonMap("Field", 100)));
+
+    instance.terminate();
+
+    final String expectedMessage = "The client has already been terminated";
+    expectError(() -> waitFor(reference.get()), expectedMessage);
+    expectError(() -> waitFor(reference.update("Field", 1)), expectedMessage);
+    expectError(
+        () -> waitFor(reference.set(Collections.singletonMap("Field", 1))), expectedMessage);
+    expectError(
+        () -> waitFor(instance.runBatch((batch) -> batch.update(reference, "Field", 1))),
+        expectedMessage);
+    expectError(
+        () -> waitFor(instance.runTransaction(transaction -> transaction.get(reference))),
+        expectedMessage);
+  }
+
+  @Test
+  public void testTerminateCalledMultipleTimes() {
+    FirebaseFirestore instance = testFirestore();
+    DocumentReference reference = instance.document("abc/123");
+    waitFor(reference.set(Collections.singletonMap("Field", 100)));
+
+    instance.terminate();
+
+    final String expectedMessage = "The client has already been terminated";
+    expectError(() -> waitFor(reference.get()), expectedMessage);
+
+    // Calling a second time should go through and change nothing.
+    instance.terminate();
+
+    expectError(() -> waitFor(reference.get()), expectedMessage);
+  }
+
+  @Test
+  public void testCanStopListeningAfterTerminate() {
+    FirebaseFirestore instance = testFirestore();
+    DocumentReference reference = instance.document("abc/123");
+    EventAccumulator<DocumentSnapshot> eventAccumulator = new EventAccumulator<>();
+    ListenerRegistration registration = reference.addSnapshotListener(eventAccumulator.listener());
+    eventAccumulator.await();
+
+    waitFor(instance.terminate());
+
+    // This should proceed without error.
+    registration.remove();
+    // Multiple calls should proceed as an effectively no-op.
+    registration.remove();
+  }
+
+  @Test
+  public void testWaitForPendingWritesResolves() {
+    DocumentReference documentReference = testCollection("abc").document("123");
+    FirebaseFirestore firestore = documentReference.getFirestore();
+    Map<String, Object> data = map("foo", "bar");
+
+    waitFor(firestore.disableNetwork());
+    Task<Void> awaitsPendingWrites1 = firestore.waitForPendingWrites();
+    Task<Void> pendingWrite = documentReference.set(data);
+    Task<Void> awaitsPendingWrites2 = firestore.waitForPendingWrites();
+
+    // `awaitsPendingWrites1` completes immediately because there are no pending writes at
+    // the time it is created.
+    waitFor(awaitsPendingWrites1);
+    assertTrue(awaitsPendingWrites1.isComplete() && awaitsPendingWrites1.isSuccessful());
+    assertTrue(!pendingWrite.isComplete());
+    assertTrue(!awaitsPendingWrites2.isComplete());
+
+    firestore.enableNetwork();
+    waitFor(awaitsPendingWrites2);
+    assertTrue(awaitsPendingWrites2.isComplete() && awaitsPendingWrites2.isSuccessful());
+  }
+
+  @Test
+  public void testWaitForPendingWritesFailsWhenUserChanges() {
+    DocumentReference documentReference = testCollection("abc").document("123");
+    FirebaseFirestore firestore = documentReference.getFirestore();
+    Map<String, Object> data = map("foo", "bar");
+
+    // Prevent pending writes receiving acknowledgement.
+    waitFor(firestore.disableNetwork());
+    Task<Void> pendingWrite = documentReference.set(data);
+    Task<Void> awaitsPendingWrites = firestore.waitForPendingWrites();
+    assertTrue(!pendingWrite.isComplete());
+    assertTrue(!awaitsPendingWrites.isComplete());
+
+    testChangeUserTo(new User("new user"));
+
+    assertTrue(!pendingWrite.isComplete());
+    assertEquals(
+        "'waitForPendingWrites' task is cancelled due to User change.",
+        waitForException(awaitsPendingWrites).getMessage());
+  }
+
+  @Test
+  public void testPendingWriteTaskResolveWhenOfflineIfThereIsNoPending() {
+    DocumentReference documentReference = testCollection("abc").document("123");
+    FirebaseFirestore firestore = documentReference.getFirestore();
+
+    // Prevent pending writes receiving acknowledgement.
+    waitFor(firestore.disableNetwork());
+    Task<Void> awaitsPendingWrites = firestore.waitForPendingWrites();
+    waitFor(awaitsPendingWrites);
+
+    assertTrue(awaitsPendingWrites.isComplete() && awaitsPendingWrites.isSuccessful());
   }
 }

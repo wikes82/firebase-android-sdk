@@ -16,6 +16,8 @@ package com.google.firebase.storage;
 
 import android.os.Build;
 import com.google.android.gms.tasks.Task;
+import com.google.firebase.FirebaseApp;
+import com.google.firebase.storage.internal.MockClockHelper;
 import com.google.firebase.storage.internal.RobolectricThreadFix;
 import com.google.firebase.storage.network.MockConnectionFactory;
 import com.google.firebase.storage.network.NetworkLayerMock;
@@ -25,46 +27,42 @@ import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.robolectric.Robolectric;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 
 /** Tests for {@link FirebaseStorage}. */
 @RunWith(RobolectricTestRunner.class)
-@Config(manifest = Config.NONE, sdk = Build.VERSION_CODES.LOLLIPOP_MR1)
+@Config(sdk = Build.VERSION_CODES.LOLLIPOP_MR1)
 public class DeleteTest {
 
   @Rule public RetryRule retryRule = new RetryRule(3);
 
   @Rule public FirebaseAppRule firebaseAppRule = new FirebaseAppRule();
 
+  FirebaseApp app;
+
   @Before
   public void setUp() throws Exception {
     RobolectricThreadFix.install();
-    TestUtil.setup();
+    MockClockHelper.install();
+    app = TestUtil.createApp();
   }
 
   @After
   public void tearDown() {
-    TestUtil.unInit();
+    FirebaseStorageComponent component = app.get(FirebaseStorageComponent.class);
+    component.clearInstancesForTesting();
   }
 
   @SuppressWarnings("ConstantConditions")
   @Test
   public void deleteBlob() throws Exception {
-    final MockConnectionFactory factory = NetworkLayerMock.ensureNetworkMock("deleteBlob", false);
-
+    MockConnectionFactory factory = NetworkLayerMock.ensureNetworkMock("deleteBlob", false);
     Task<StringBuilder> task = TestCommandHelper.deleteBlob();
-    for (int i = 0; i < 3000; i++) {
-      Robolectric.flushForegroundThreadScheduler();
-      if (task.isComplete()) {
-        // success!
-        factory.verifyOldMock();
-        TestUtil.verifyTaskStateChanges("deleteBlob", task.getResult().toString());
-        return;
-      }
-      Thread.sleep(1);
-    }
-    assert (false);
+
+    TestUtil.await(task);
+
+    factory.verifyOldMock();
+    TestUtil.verifyTaskStateChanges("deleteBlob", task.getResult().toString());
   }
 }

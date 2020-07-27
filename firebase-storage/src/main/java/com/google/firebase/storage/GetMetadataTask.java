@@ -14,18 +14,16 @@
 
 package com.google.firebase.storage;
 
-import android.support.annotation.NonNull;
 import android.util.Log;
+import androidx.annotation.NonNull;
 import com.google.android.gms.common.internal.Preconditions;
 import com.google.android.gms.tasks.TaskCompletionSource;
-import com.google.firebase.annotations.PublicApi;
 import com.google.firebase.storage.internal.ExponentialBackoffSender;
 import com.google.firebase.storage.network.GetMetadataNetworkRequest;
 import com.google.firebase.storage.network.NetworkRequest;
 import org.json.JSONException;
 
 /** A Task that retrieves metadata for a {@link StorageReference} object */
-@PublicApi
 class GetMetadataTask implements Runnable {
   private static final String TAG = "GetMetadataTask";
 
@@ -42,13 +40,20 @@ class GetMetadataTask implements Runnable {
 
     this.mStorageRef = storageRef;
     this.mPendingResult = pendingResult;
+    if (storageRef.getRoot().getName().equals(storageRef.getName())) {
+      throw new IllegalArgumentException(
+          "getMetadata() is not supported at the root of the bucket.");
+    }
+
+    FirebaseStorage storage = mStorageRef.getStorage();
     mSender =
         new ExponentialBackoffSender(
-            mStorageRef.getApp(), mStorageRef.getStorage().getMaxOperationRetryTimeMillis());
+            storage.getApp().getApplicationContext(),
+            storage.getAuthProvider(),
+            storage.getMaxDownloadRetryTimeMillis());
   }
 
   @Override
-  @PublicApi
   public void run() {
     final NetworkRequest request =
         new GetMetadataNetworkRequest(mStorageRef.getStorageUri(), mStorageRef.getApp());

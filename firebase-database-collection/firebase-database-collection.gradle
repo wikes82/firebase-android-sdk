@@ -12,18 +12,32 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-apply plugin: 'com.android.library'
+plugins {
+    id 'firebase-library'
+}
+
+firebaseLibrary {
+    publishSources = true
+}
 
 android {
     compileSdkVersion project.targetSdkVersion
     defaultConfig {
-        minSdkVersion 9
+        targetSdkVersion project.targetSdkVersion
+        minSdkVersion project.minSdkVersion
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
     }
 }
 
 dependencies {
+    implementation 'com.google.android.gms:play-services-base:17.0.0'
+
     testImplementation 'junit:junit:4.12'
     testImplementation 'net.java:quickcheck:0.6'
+
     testAnnotationProcessor 'net.java:quickcheck-src-generator:0.6'
     testAnnotationProcessor 'net.java.quickcheck:quickcheck-src-generator:0.6'
 }

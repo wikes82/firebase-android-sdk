@@ -14,12 +14,16 @@
 
 package com.google.firebase.database.tubesock;
 
-import com.google.firebase.database.TestHelpers;
+import static java.util.logging.Level.WARNING;
+
+import com.google.firebase.database.IntegrationTestHelpers;
 import java.net.URI;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.logging.Logger;
 
 public class TestClient {
+  private static Logger LOGGER = Logger.getLogger(Handler.class.getName());
 
   private WebSocket client;
   private AtomicBoolean inTest;
@@ -40,7 +44,7 @@ public class TestClient {
           client.send(message.getBytes());
         }
       } catch (WebSocketException e) {
-        e.printStackTrace();
+        LOGGER.log(WARNING, "unexpected error", e);
       }
     }
 
@@ -66,7 +70,7 @@ public class TestClient {
     URI uri = URI.create("ws://localhost:9001/runCase?case=" + testNum + "&agent=tubesock");
     inTest = new AtomicBoolean(true);
     testLatch = new Semaphore(0);
-    client = new WebSocket(TestHelpers.getContext(0).getConnectionContext(), uri);
+    client = new WebSocket(IntegrationTestHelpers.getContext(0).getConnectionContext(), uri);
     client.setEventHandler(new Handler());
     client.connect();
     testLatch.acquire(1);
@@ -79,7 +83,7 @@ public class TestClient {
       testLatch.release(1);
     } else {
       // Sanity check to make sure we don't double-close
-      System.err.println("Tried to end a test that was already over");
+      LOGGER.log(WARNING, "Tried to end a test that was already over");
     }
   }
 }

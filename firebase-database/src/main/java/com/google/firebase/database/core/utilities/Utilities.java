@@ -14,7 +14,10 @@
 
 package com.google.firebase.database.core.utilities;
 
+import android.net.Uri;
 import android.util.Base64;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import com.google.android.gms.tasks.Task;
 import com.google.android.gms.tasks.TaskCompletionSource;
 import com.google.firebase.database.DatabaseError;
@@ -23,83 +26,83 @@ import com.google.firebase.database.DatabaseReference;
 import com.google.firebase.database.core.Path;
 import com.google.firebase.database.core.RepoInfo;
 import java.io.UnsupportedEncodingException;
-import java.net.URI;
-import java.net.URISyntaxException;
-import java.net.URLEncoder;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.ArrayList;
 import java.util.Map;
 
 public class Utilities {
   private static final char[] HEX_CHARACTERS = "0123456789abcdef".toCharArray();
 
-  public static ParsedUrl parseUrl(String url) throws DatabaseException {
-    String original = url;
+  public static ParsedUrl parseUrl(@NonNull String url) throws DatabaseException {
     try {
-      int schemeOffset = original.indexOf("//");
-      if (schemeOffset == -1) {
-        throw new URISyntaxException(original, "Invalid scheme specified");
-      }
-      int pathOffset = original.substring(schemeOffset + 2).indexOf("/");
-      if (pathOffset != -1) {
-        pathOffset += schemeOffset + 2;
-        String[] pathSegments = original.substring(pathOffset).split("/", -1);
-        StringBuilder builder = new StringBuilder();
-        for (int i = 0; i < pathSegments.length; ++i) {
-          if (!pathSegments[i].equals("")) {
-            builder.append("/");
-            builder.append(URLEncoder.encode(pathSegments[i], "UTF-8"));
-          }
-        }
-        original = original.substring(0, pathOffset) + builder.toString();
+      Uri uri = Uri.parse(url);
+
+      String scheme = uri.getScheme();
+      if (scheme == null) {
+        throw new IllegalArgumentException("Database URL does not specify a URL scheme");
       }
 
-      URI uri = new URI(original);
-      // URLEncoding a space turns it into a '+', which is different
-      // from our expected behavior. Do a manual replace to fix it.
-      String pathString = uri.getPath().replace("+", " ");
-      Validation.validateRootPathString(pathString);
-      Path path = new Path(pathString);
-      String scheme = uri.getScheme();
+      String host = uri.getHost();
+      if (host == null) {
+        throw new IllegalArgumentException("Database URL does not specify a valid host");
+      }
+
+      String namespace = uri.getQueryParameter("ns");
+      if (namespace == null) {
+        String[] parts = host.split("\\.", -1);
+        namespace = parts[0].toLowerCase();
+      }
 
       RepoInfo repoInfo = new RepoInfo();
-      repoInfo.host = uri.getHost().toLowerCase();
-
+      repoInfo.host = host.toLowerCase();
       int port = uri.getPort();
       if (port != -1) {
-        repoInfo.secure = scheme.equals("https");
+        repoInfo.secure = scheme.equals("https") || scheme.equals("wss");
         repoInfo.host += ":" + port;
       } else {
         repoInfo.secure = true;
       }
-      String[] parts = repoInfo.host.split("\\.", -1);
 
-      repoInfo.namespace = parts[0].toLowerCase();
       repoInfo.internalHost = repoInfo.host;
-      ParsedUrl parsedUrl = new ParsedUrl();
-      parsedUrl.path = path;
-      parsedUrl.repoInfo = repoInfo;
-      return parsedUrl;
+      repoInfo.namespace = namespace;
 
-    } catch (URISyntaxException e) {
-      throw new DatabaseException("Invalid Firebase Database url specified", e);
-    } catch (UnsupportedEncodingException e) {
-      throw new DatabaseException("Failed to URLEncode the path", e);
+      String originalPathString = extractPathString(url);
+      // URLEncoding a space turns it into a '+', which is different
+      // from our expected behavior. Do a manual replace to fix it.
+      originalPathString = originalPathString.replace("+", " ");
+      Validation.validateRootPathString(originalPathString);
+
+      ParsedUrl parsedUrl = new ParsedUrl();
+      parsedUrl.path = new Path(originalPathString);
+      parsedUrl.repoInfo = repoInfo;
+
+      return parsedUrl;
+    } catch (Exception e) {
+      throw new DatabaseException("Invalid Firebase Database url specified: " + url, e);
     }
   }
 
-  public static String[] splitIntoFrames(String src, int maxFrameSize) {
-    if (src.length() <= maxFrameSize) {
-      return new String[] {src};
-    } else {
-      ArrayList<String> segs = new ArrayList<String>();
-      for (int i = 0; i < src.length(); i += maxFrameSize) {
-        int end = Math.min(i + maxFrameSize, src.length());
-        String seg = src.substring(i, end);
-        segs.add(seg);
+  /**
+   * Extracts the path string from the original URL without changing the encoding (unlike
+   * Uri.getPath()).
+   */
+  private static String extractPathString(String originalUrl) {
+    int schemeOffset = originalUrl.indexOf("//");
+    if (schemeOffset == -1) {
+      throw new DatabaseException("Firebase Database URL is missing URL scheme");
+    }
+
+    String urlWithoutScheme = originalUrl.substring(schemeOffset + 2);
+    int pathOffset = urlWithoutScheme.indexOf("/");
+    if (pathOffset != -1) {
+      int queryOffset = urlWithoutScheme.indexOf("?");
+      if (queryOffset != -1) {
+        return urlWithoutScheme.substring(pathOffset + 1, queryOffset);
+      } else {
+        return urlWithoutScheme.substring(pathOffset + 1);
       }
-      return segs.toArray(new String[segs.size()]);
+    } else {
+      return "";
     }
   }
 
@@ -170,7 +173,7 @@ public class Utilities {
       if (-number < Integer.MIN_VALUE) {
         return null;
       } else {
-        return (int) (-number);
+        return (int) -number;
       }
     } else {
       if (number > Integer.MAX_VALUE) {
@@ -251,5 +254,16 @@ public class Utilities {
       // If a listener is supplied we do not want to create a Task
       return new Pair<>(null, optListener);
     }
+  }
+
+  /** A nullable-aware equals method. */
+  public static boolean equals(@Nullable Object left, @Nullable Object right) {
+    if (left == right) {
+      return true;
+    }
+    if (left == null || right == null) {
+      return false;
+    }
+    return left.equals(right);
   }
 }

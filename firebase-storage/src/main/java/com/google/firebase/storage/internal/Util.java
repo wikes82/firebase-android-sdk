@@ -16,16 +16,17 @@ package com.google.firebase.storage.internal;
 
 import android.net.Uri;
 import android.os.RemoteException;
-import android.support.annotation.NonNull;
-import android.support.annotation.Nullable;
 import android.text.TextUtils;
 import android.util.Log;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import com.google.android.gms.common.internal.Objects;
 import com.google.android.gms.common.internal.Preconditions;
 import com.google.android.gms.tasks.Task;
 import com.google.android.gms.tasks.Tasks;
 import com.google.firebase.FirebaseApp;
 import com.google.firebase.auth.GetTokenResult;
+import com.google.firebase.auth.internal.InternalAuthProvider;
 import com.google.firebase.storage.network.NetworkRequest;
 import java.io.UnsupportedEncodingException;
 import java.text.ParseException;
@@ -94,7 +95,7 @@ public class Util {
     String bucket;
     String encodedPath;
     if (trimmedInput.startsWith("gs://")) {
-      String fullUri = SlashUtil.preserveSlashEncode(SlashUtil.normalizeSlashes(s.substring(5)));
+      String fullUri = Slashes.preserveSlashEncode(Slashes.normalizeSlashes(s.substring(5)));
       return Uri.parse("gs://" + fullUri);
     } else {
       Uri uri = Uri.parse(s);
@@ -110,7 +111,7 @@ public class Util {
           throw new UnsupportedEncodingException(
               "Could not parse Url because the Storage network layer did not load");
         }
-        encodedPath = SlashUtil.slashize(uri.getEncodedPath());
+        encodedPath = Slashes.slashize(uri.getEncodedPath());
         if (indexOfAuth == 0 && encodedPath.startsWith("/")) {
           int firstBSlash = encodedPath.indexOf("/b/", 0); // /v0/b/bucket.storage
           // .firebase.com/o/child/image.png
@@ -144,12 +145,17 @@ public class Util {
   }
 
   @Nullable
-  public static String getCurrentAuthToken(FirebaseApp app) {
-    Task<GetTokenResult> pendingResult = app.getToken(false);
-    GetTokenResult result;
+  public static String getCurrentAuthToken(@Nullable InternalAuthProvider authProvider) {
     try {
-      result = Tasks.await(pendingResult, MAXIMUM_TOKEN_WAIT_TIME_MS, TimeUnit.MILLISECONDS);
-      String token = result.getToken();
+      String token = null;
+
+      if (authProvider != null) {
+        Task<GetTokenResult> pendingResult = authProvider.getAccessToken(false);
+        GetTokenResult result =
+            Tasks.await(pendingResult, MAXIMUM_TOKEN_WAIT_TIME_MS, TimeUnit.MILLISECONDS);
+        token = result.getToken();
+      }
+
       if (!TextUtils.isEmpty(token)) {
         return token;
       } else {

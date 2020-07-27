@@ -14,8 +14,8 @@
 
 package com.google.firebase.storage;
 
-import android.support.annotation.NonNull;
 import android.util.Log;
+import androidx.annotation.NonNull;
 import com.google.android.gms.tasks.TaskCompletionSource;
 import com.google.firebase.storage.internal.ExponentialBackoffSender;
 import com.google.firebase.storage.network.NetworkRequest;
@@ -39,24 +39,20 @@ class UpdateMetadataTask implements Runnable {
     this.mStorageRef = storageRef;
     this.mPendingResult = pendingResult;
     mNewMetadata = newMetadata;
+
+    FirebaseStorage storage = mStorageRef.getStorage();
     mSender =
         new ExponentialBackoffSender(
-            mStorageRef.getApp(), mStorageRef.getStorage().getMaxOperationRetryTimeMillis());
+            storage.getApp().getApplicationContext(),
+            storage.getAuthProvider(),
+            storage.getMaxOperationRetryTimeMillis());
   }
 
   @Override
   public void run() {
-    final NetworkRequest request;
-    try {
-      request =
-          new UpdateMetadataNetworkRequest(
-              mStorageRef.getStorageUri(), mStorageRef.getApp(), mNewMetadata.createJSONObject());
-    } catch (final JSONException e) {
-      Log.e(TAG, "Unable to create the request from metadata.", e);
-
-      mPendingResult.setException(StorageException.fromException(e));
-      return;
-    }
+    final NetworkRequest request =
+        new UpdateMetadataNetworkRequest(
+            mStorageRef.getStorageUri(), mStorageRef.getApp(), mNewMetadata.createJSONObject());
 
     mSender.sendWithExponentialBackoff(request);
     if (request.isResultSuccess()) {

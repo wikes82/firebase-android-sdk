@@ -14,9 +14,10 @@
 
 package com.google.firebase.firestore.model.mutation;
 
+import androidx.annotation.Nullable;
 import com.google.firebase.Timestamp;
-import com.google.firebase.firestore.model.value.FieldValue;
-import com.google.firebase.firestore.model.value.ServerTimestampValue;
+import com.google.firebase.firestore.model.ServerTimestamps;
+import com.google.firestore.v1.Value;
 
 /** Transforms a value into a server-generated timestamp. */
 public class ServerTimestampOperation implements TransformOperation {
@@ -29,13 +30,19 @@ public class ServerTimestampOperation implements TransformOperation {
   }
 
   @Override
-  public FieldValue applyToLocalView(FieldValue previousValue, Timestamp localWriteTime) {
-    return new ServerTimestampValue(localWriteTime, previousValue);
+  public Value applyToLocalView(@Nullable Value previousValue, Timestamp localWriteTime) {
+    return ServerTimestamps.valueOf(localWriteTime, previousValue);
   }
 
   @Override
-  public FieldValue applyToRemoteDocument(FieldValue previousValue, FieldValue transformResult) {
+  public Value applyToRemoteDocument(@Nullable Value previousValue, Value transformResult) {
     return transformResult;
+  }
+
+  @Nullable
+  @Override
+  public Value computeBaseValue(@Nullable Value currentValue) {
+    return null; // Server timestamps are idempotent and don't require a base value.
   }
 
   // NOTE: Since we've guaranteed a singleton instance, we can rely on Object's default

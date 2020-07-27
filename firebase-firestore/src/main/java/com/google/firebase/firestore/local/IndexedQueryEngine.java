@@ -16,28 +16,24 @@ package com.google.firebase.firestore.local;
 
 import static com.google.firebase.firestore.util.Assert.hardAssert;
 
-import android.support.annotation.Nullable;
-import android.support.annotation.VisibleForTesting;
+import androidx.annotation.Nullable;
+import androidx.annotation.VisibleForTesting;
 import com.google.firebase.database.collection.ImmutableSortedMap;
+import com.google.firebase.database.collection.ImmutableSortedSet;
+import com.google.firebase.firestore.core.FieldFilter;
 import com.google.firebase.firestore.core.Filter;
 import com.google.firebase.firestore.core.Filter.Operator;
 import com.google.firebase.firestore.core.IndexRange;
-import com.google.firebase.firestore.core.NaNFilter;
-import com.google.firebase.firestore.core.NullFilter;
 import com.google.firebase.firestore.core.Query;
-import com.google.firebase.firestore.core.RelationFilter;
 import com.google.firebase.firestore.model.Document;
 import com.google.firebase.firestore.model.DocumentCollections;
 import com.google.firebase.firestore.model.DocumentKey;
 import com.google.firebase.firestore.model.FieldPath;
 import com.google.firebase.firestore.model.MaybeDocument;
-import com.google.firebase.firestore.model.value.ArrayValue;
-import com.google.firebase.firestore.model.value.BooleanValue;
-import com.google.firebase.firestore.model.value.DoubleValue;
-import com.google.firebase.firestore.model.value.FieldValue;
-import com.google.firebase.firestore.model.value.NullValue;
-import com.google.firebase.firestore.model.value.ObjectValue;
+import com.google.firebase.firestore.model.SnapshotVersion;
+import com.google.firebase.firestore.model.Values;
 import com.google.firebase.firestore.util.Assert;
+import com.google.firestore.v1.Value;
 import java.util.Arrays;
 import java.util.List;
 
@@ -67,7 +63,7 @@ import java.util.List;
  *   <li>HIGH_SELECTIVITY: {@code BlobValue}, {@code DoubleValue}, {@code GeoPointValue}, {@code
  *       NumberValue}, {@code ReferenceValue}, {@code StringValue}, {@code TimestampValue}, {@code
  *       NullValue}
- *   <li>LOW_SELECTIVITY: {@code ArrayValue}, {@code ObjectValue}, {@code BooleanValue}
+ *   <li>LOW_SELECTIVITY: {@code ArrayValue}, {@code MapValue}, {@code BooleanValue}
  * </ul>
  *
  * <p>Note that we consider {@code NullValue} a high selectivity filter as we only support equals
@@ -85,24 +81,35 @@ public class IndexedQueryEngine implements QueryEngine {
   private static final double HIGH_SELECTIVITY = 1.0;
   private static final double LOW_SELECTIVITY = 0.5;
 
-  // ArrayValue and ObjectValue are currently considered low cardinality because we don't index
+  // ARRAY_VALUE and MAP_VALUE are currently considered low cardinality because we don't index
   // them uniquely.
-  private static final List<Class> lowCardinalityTypes =
-      Arrays.asList(BooleanValue.class, ArrayValue.class, ObjectValue.class);
+  private static final List<Value.ValueTypeCase> lowCardinalityTypes =
+      Arrays.asList(
+          Value.ValueTypeCase.BOOLEAN_VALUE,
+          Value.ValueTypeCase.ARRAY_VALUE,
+          Value.ValueTypeCase.MAP_VALUE);
 
-  private final LocalDocumentsView localDocuments;
   private final SQLiteCollectionIndex collectionIndex;
+  private LocalDocumentsView localDocuments;
 
-  public IndexedQueryEngine(
-      LocalDocumentsView localDocuments, SQLiteCollectionIndex collectionIndex) {
-    this.localDocuments = localDocuments;
+  public IndexedQueryEngine(SQLiteCollectionIndex collectionIndex) {
     this.collectionIndex = collectionIndex;
   }
 
   @Override
-  public ImmutableSortedMap<DocumentKey, Document> getDocumentsMatchingQuery(Query query) {
+  public void setLocalDocumentsView(LocalDocumentsView localDocuments) {
+    this.localDocuments = localDocuments;
+  }
+
+  @Override
+  public ImmutableSortedMap<DocumentKey, Document> getDocumentsMatchingQuery(
+      Query query,
+      SnapshotVersion lastLimboFreeSnapshotVersion,
+      ImmutableSortedSet<DocumentKey> remoteKeys) {
+    hardAssert(localDocuments != null, "setLocalDocumentsView() not called");
+
     return query.isDocumentQuery()
-        ? localDocuments.getDocumentsMatchingQuery(query)
+        ? localDocuments.getDocumentsMatchingQuery(query, SnapshotVersion.NONE)
         : performCollectionQuery(query);
   }
 
@@ -121,7 +128,7 @@ public class IndexedQueryEngine implements QueryEngine {
           "If there are any filters, we should be able to use an index.");
       // TODO: Call overlay.getCollectionDocuments(query.getPath()) and filter the
       // results (there may still be startAt/endAt bounds that apply).
-      filteredResults = localDocuments.getDocumentsMatchingQuery(query);
+      filteredResults = localDocuments.getDocumentsMatchingQuery(query, SnapshotVersion.NONE);
     }
 
     return filteredResults;
@@ -156,18 +163,16 @@ public class IndexedQueryEngine implements QueryEngine {
    * @return a number from 0.0 to 1.0 (inclusive), where higher numbers indicate higher selectivity
    */
   private static double estimateFilterSelectivity(Filter filter) {
-    if (filter instanceof NullFilter) {
-      return HIGH_SELECTIVITY;
-    } else if (filter instanceof NaNFilter) {
+    hardAssert(filter instanceof FieldFilter, "Filter type expected to be FieldFilter");
+    FieldFilter fieldFilter = (FieldFilter) filter;
+    Value filterValue = fieldFilter.getValue();
+    if (Values.isNullValue(filterValue) || Values.isNanValue(filterValue)) {
       return HIGH_SELECTIVITY;
     } else {
-      hardAssert(filter instanceof RelationFilter, "Filter type expected to be RelationFilter");
-      RelationFilter relationFilter = (RelationFilter) filter;
-
       double operatorSelectivity =
-          relationFilter.getOperator().equals(Operator.EQUAL) ? HIGH_SELECTIVITY : LOW_SELECTIVITY;
+          fieldFilter.getOperator().equals(Operator.EQUAL) ? HIGH_SELECTIVITY : LOW_SELECTIVITY;
       double typeSelectivity =
-          lowCardinalityTypes.contains(relationFilter.getValue().getClass())
+          lowCardinalityTypes.contains(fieldFilter.getValue().getValueTypeCase())
               ? LOW_SELECTIVITY
               : HIGH_SELECTIVITY;
 
@@ -216,10 +221,10 @@ public class IndexedQueryEngine implements QueryEngine {
    */
   private static IndexRange convertFilterToIndexRange(Filter filter) {
     IndexRange.Builder indexRange = IndexRange.builder().setFieldPath(filter.getField());
-    if (filter instanceof RelationFilter) {
-      RelationFilter relationFilter = (RelationFilter) filter;
-      FieldValue filterValue = relationFilter.getValue();
-      switch (relationFilter.getOperator()) {
+    if (filter instanceof FieldFilter) {
+      FieldFilter fieldFilter = (FieldFilter) filter;
+      Value filterValue = fieldFilter.getValue();
+      switch (fieldFilter.getOperator()) {
         case EQUAL:
           indexRange.setStart(filterValue).setEnd(filterValue);
           break;
@@ -235,10 +240,6 @@ public class IndexedQueryEngine implements QueryEngine {
           // TODO: Add support for ARRAY_CONTAINS.
           throw Assert.fail("Unexpected operator in query filter");
       }
-    } else if (filter instanceof NaNFilter) {
-      indexRange.setStart(DoubleValue.NaN).setEnd(DoubleValue.NaN);
-    } else if (filter instanceof NullFilter) {
-      indexRange.setStart(NullValue.nullValue()).setEnd(NullValue.nullValue());
     }
     return indexRange.build();
   }

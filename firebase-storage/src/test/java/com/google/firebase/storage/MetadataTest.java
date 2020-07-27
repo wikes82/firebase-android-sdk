@@ -16,93 +16,74 @@ package com.google.firebase.storage;
 
 import android.os.Build;
 import com.google.android.gms.tasks.Task;
+import com.google.firebase.FirebaseApp;
+import com.google.firebase.storage.internal.MockClockHelper;
 import com.google.firebase.storage.internal.RobolectricThreadFix;
 import com.google.firebase.storage.network.MockConnectionFactory;
 import com.google.firebase.storage.network.NetworkLayerMock;
 import com.google.firebase.testing.FirebaseAppRule;
-import junit.framework.Assert;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.robolectric.Robolectric;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 
 /** Tests for {@link FirebaseStorage}. */
 @RunWith(RobolectricTestRunner.class)
-@Config(manifest = Config.NONE, sdk = Build.VERSION_CODES.LOLLIPOP_MR1)
+@Config(sdk = Build.VERSION_CODES.LOLLIPOP_MR1)
 public class MetadataTest {
 
   @Rule public RetryRule retryRule = new RetryRule(3);
   @Rule public FirebaseAppRule firebaseAppRule = new FirebaseAppRule();
 
+  private FirebaseApp app;
+
   @Before
   public void setUp() throws Exception {
     RobolectricThreadFix.install();
-    TestUtil.setup();
+    MockClockHelper.install();
+    app = TestUtil.createApp();
   }
 
   @After
   public void tearDown() {
-    TestUtil.unInit();
+    FirebaseStorageComponent component = app.get(FirebaseStorageComponent.class);
+    component.clearInstancesForTesting();
   }
 
   @SuppressWarnings("ConstantConditions")
   @Test
   public void updateMetadata() throws Exception {
     MockConnectionFactory factory = NetworkLayerMock.ensureNetworkMock("updateMetadata", true);
-
     Task<StringBuilder> task = TestCommandHelper.testUpdateMetadata();
-    for (int i = 0; i < 3000; i++) {
-      Robolectric.flushForegroundThreadScheduler();
-      if (task.isComplete()) {
-        // success!
-        factory.verifyOldMock();
-        TestUtil.verifyTaskStateChanges("updateMetadata", task.getResult().toString());
-        return;
-      }
-      Thread.sleep(1);
-    }
-    assert (false);
+
+    TestUtil.await(task);
+
+    factory.verifyOldMock();
+    TestUtil.verifyTaskStateChanges("updateMetadata", task.getResult().toString());
   }
 
   @Test
   public void unicodeMetadata() throws Exception {
     MockConnectionFactory factory = NetworkLayerMock.ensureNetworkMock("unicodeMetadata", true);
-
     Task<StringBuilder> task = TestCommandHelper.testUnicodeMetadata();
-    for (int i = 0; i < 3000; i++) {
-      Robolectric.flushForegroundThreadScheduler();
-      if (task.isComplete()) {
-        // success!
-        factory.verifyOldMock();
-        TestUtil.verifyTaskStateChanges("unicodeMetadata", task.getResult().toString());
-        return;
-      }
-      Thread.sleep(1);
-    }
 
-    Assert.fail("Task did not complete");
+    TestUtil.await(task);
+
+    factory.verifyOldMock();
+    TestUtil.verifyTaskStateChanges("unicodeMetadata", task.getResult().toString());
   }
 
   @Test
   public void clearMetadata() throws Exception {
     MockConnectionFactory factory = NetworkLayerMock.ensureNetworkMock("clearMetadata", true);
-
     Task<StringBuilder> task = TestCommandHelper.testClearMetadata();
-    for (int i = 0; i < 3000; i++) {
-      Robolectric.flushForegroundThreadScheduler();
-      if (task.isComplete()) {
-        // success!
-        factory.verifyOldMock();
-        TestUtil.verifyTaskStateChanges("clearMetadata", task.getResult().toString());
-        return;
-      }
-      Thread.sleep(1);
-    }
 
-    Assert.fail("Task did not complete");
+    TestUtil.await(task);
+
+    factory.verifyOldMock();
+    TestUtil.verifyTaskStateChanges("clearMetadata", task.getResult().toString());
   }
 }

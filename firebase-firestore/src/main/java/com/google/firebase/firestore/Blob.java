@@ -14,17 +14,15 @@
 
 package com.google.firebase.firestore;
 
-import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.firebase.firestore.util.Preconditions.checkNotNull;
 
-import android.support.annotation.Keep;
-import android.support.annotation.NonNull;
-import android.support.annotation.Nullable;
-import com.google.firebase.annotations.PublicApi;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.annotation.RestrictTo;
 import com.google.firebase.firestore.util.Util;
 import com.google.protobuf.ByteString;
 
-/** Immutable class representing an array of bytes in Firestore. */
-@PublicApi
+/** Immutable class representing an array of bytes in Cloud Firestore. */
 public class Blob implements Comparable<Blob> {
   private final ByteString bytes;
 
@@ -33,12 +31,12 @@ public class Blob implements Comparable<Blob> {
   }
 
   /**
-   * Creates a new Blob instance from the provided bytes. Will make a copy of the bytes passed in.
+   * Creates a new {@code Blob} instance from the provided bytes. Will make a copy of the bytes
+   * passed in.
    *
-   * @param bytes The bytes to use for this Blob instance.
-   * @return The new Blob instance
+   * @param bytes The bytes to use for this {@code Blob} instance.
+   * @return The new {@code Blob} instance
    */
-  @Keep
   @NonNull
   public static Blob fromBytes(@NonNull byte[] bytes) {
     checkNotNull(bytes, "Provided bytes array must not be null.");
@@ -47,13 +45,13 @@ public class Blob implements Comparable<Blob> {
 
   /** @hide */
   @NonNull
+  @RestrictTo(RestrictTo.Scope.LIBRARY_GROUP)
   public static Blob fromByteString(@NonNull ByteString bytes) {
     checkNotNull(bytes, "Provided ByteString must not be null.");
     return new Blob(bytes);
   }
 
   /** @return The bytes of this blob as a new byte[] array. */
-  @Keep
   @NonNull
   public byte[] toBytes() {
     return bytes.toByteArray();
@@ -67,6 +65,7 @@ public class Blob implements Comparable<Blob> {
 
   /** @hide */
   @NonNull
+  @RestrictTo(RestrictTo.Scope.LIBRARY_GROUP)
   public ByteString toByteString() {
     return bytes;
   }
@@ -82,20 +81,7 @@ public class Blob implements Comparable<Blob> {
   }
 
   @Override
-  @PublicApi
   public int compareTo(@NonNull Blob other) {
-    int size = Math.min(bytes.size(), other.bytes.size());
-    for (int i = 0; i < size; i++) {
-      // Make sure the bytes are unsigned
-      int thisByte = bytes.byteAt(i) & 0xff;
-      int otherByte = other.bytes.byteAt(i) & 0xff;
-      if (thisByte < otherByte) {
-        return -1;
-      } else if (thisByte > otherByte) {
-        return 1;
-      }
-      // Byte values are equal, continue with comparison
-    }
-    return Util.compareIntegers(bytes.size(), other.bytes.size());
+    return Util.compareByteStrings(bytes, other.bytes);
   }
 }

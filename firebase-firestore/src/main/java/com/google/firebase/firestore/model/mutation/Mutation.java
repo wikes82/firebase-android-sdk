@@ -16,12 +16,13 @@ package com.google.firebase.firestore.model.mutation;
 
 import static com.google.firebase.firestore.util.Assert.hardAssert;
 
+import androidx.annotation.Nullable;
 import com.google.firebase.Timestamp;
 import com.google.firebase.firestore.model.Document;
 import com.google.firebase.firestore.model.DocumentKey;
 import com.google.firebase.firestore.model.MaybeDocument;
+import com.google.firebase.firestore.model.ObjectValue;
 import com.google.firebase.firestore.model.SnapshotVersion;
-import javax.annotation.Nullable;
 
 /**
  * Represents a Mutation of a document. Different subclasses of Mutation will perform different
@@ -112,6 +113,23 @@ public abstract class Mutation {
   @Nullable
   public abstract MaybeDocument applyToLocalView(
       @Nullable MaybeDocument maybeDoc, @Nullable MaybeDocument baseDoc, Timestamp localWriteTime);
+
+  /**
+   * If applicable, returns the base value to persist with this mutation. If a base value is
+   * provided, the mutation is always applied to this base value, even if document has already been
+   * updated.
+   *
+   * <p>The base value is a sparse object that consists of only the document fields for which this
+   * mutation contains a non-idempotent transformation (e.g. a numeric increment). The provided
+   * value guarantees consistent behavior for non-idempotent transforms and allow us to return the
+   * same latency-compensated value even if the backend has already applied the mutation. The base
+   * value is null for idempotent mutations, as they can be re-played even if the backend has
+   * already applied them.
+   *
+   * @return a base value to store along with the mutation, or null for idempotent mutations.
+   */
+  @Nullable
+  public abstract ObjectValue extractBaseValue(@Nullable MaybeDocument maybeDoc);
 
   /** Helper for derived classes to implement .equals(). */
   boolean hasSameKeyAndPrecondition(Mutation other) {

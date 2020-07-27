@@ -17,9 +17,10 @@ package com.google.firebase.database.core;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
-import android.support.test.runner.AndroidJUnit4;
+import androidx.test.ext.junit.runners.AndroidJUnit4;
+import com.google.common.base.Splitter;
 import com.google.firebase.database.FirebaseDatabase;
-import com.google.firebase.database.TestHelpers;
+import com.google.firebase.database.IntegrationTestHelpers;
 import org.junit.Test;
 
 @org.junit.runner.RunWith(AndroidJUnit4.class)
@@ -27,14 +28,14 @@ public class AndroidPlatformTest {
 
   @Test
   public void userAgentHasCorrectParts() {
-    Context cfg = TestHelpers.getContext(0);
+    Context cfg = IntegrationTestHelpers.getContext(0);
     cfg.freeze();
     String userAgent = cfg.getUserAgent();
-    String[] parts = userAgent.split("/");
+    Object[] parts = Splitter.on('/').splitToList(userAgent).toArray();
     assertEquals(5, parts.length);
     assertEquals("Firebase", parts[0]); // Firebase
     assertEquals(Constants.WIRE_PROTOCOL_VERSION, parts[1]); // Wire protocol version
     assertEquals(FirebaseDatabase.getSdkVersion(), parts[2]); // SDK version
-    assertTrue(parts[4].contains("Android")); // "OS" => Android
+    assertTrue(parts[4].toString().contains("Android")); // "OS" => Android
   }
 }

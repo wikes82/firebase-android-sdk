@@ -14,16 +14,22 @@
 
 package com.google.firebase.functions;
 
-import android.support.annotation.Nullable;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import com.google.android.gms.tasks.Task;
+import java.util.concurrent.TimeUnit;
 
 /** A reference to a particular Callable HTTPS trigger in Cloud Functions. */
 public class HttpsCallableReference {
+
   // The functions client to use for making calls.
   private final FirebaseFunctions functionsClient;
 
   // The name of the HTTPS endpoint this reference refers to.
   private final String name;
+
+  // Options for how to do the HTTPS call.
+  HttpsCallOptions options = new HttpsCallOptions();
 
   /** Creates a new reference with the given options. */
   HttpsCallableReference(FirebaseFunctions functionsClient, String name) {
@@ -38,20 +44,22 @@ public class HttpsCallableReference {
    *
    * <ul>
    *   <li>Any primitive type, including null, int, long, float, and boolean.
-   *   <li>String
-   *   <li>List&lt;?&gt;, where the contained objects are also one of these types.
-   *   <li>Map&lt;String, ?&gt;, where the values are also one of these types.
-   *   <li>JSONArray
-   *   <li>JSONObject
-   *   <li>JSONObject.NULL
+   *   <li>{@link String}
+   *   <li>{@link java.util.List List&lt;?&gt;}, where the contained objects are also one of these
+   *       types.
+   *   <li>{@link java.util.Map Map&lt;String, ?&gt;>}, where the values are also one of these
+   *       types.
+   *   <li>{@link org.json.JSONArray}
+   *   <li>{@link org.json.JSONObject}
+   *   <li>{@link org.json.JSONObject#NULL}
    * </ul>
    *
    * <p>If the returned task fails, the Exception will be one of the following types:
    *
    * <ul>
-   *   <li>IOException - if the HTTPS request failed to connect.
-   *   <li>FirebaseFunctionsException - if the request connected, but the function returned an
-   *       error.
+   *   <li>{@link java.io.IOException} - if the HTTPS request failed to connect.
+   *   <li>{@link FirebaseFunctionsException} - if the request connected, but the function returned
+   *       an error.
    * </ul>
    *
    * <p>The request to the Cloud Functions backend made by this method automatically includes a
@@ -70,8 +78,9 @@ public class HttpsCallableReference {
    * @see java.io.IOException
    * @see FirebaseFunctionsException
    */
+  @NonNull
   public Task<HttpsCallableResult> call(@Nullable Object data) {
-    return functionsClient.call(name, data);
+    return functionsClient.call(name, data, options);
   }
 
   /**
@@ -88,7 +97,40 @@ public class HttpsCallableReference {
    *
    * @return A Task that will be completed when the HTTPS request has completed.
    */
+  @NonNull
   public Task<HttpsCallableResult> call() {
-    return functionsClient.call(name, null);
+    return functionsClient.call(name, null, options);
+  }
+
+  /**
+   * Changes the timeout for calls from this instance of Functions. The default is 60 seconds.
+   *
+   * @param timeout The length of the timeout, in the given units.
+   * @param units The units for the specified timeout.
+   */
+  public void setTimeout(long timeout, @NonNull TimeUnit units) {
+    options.setTimeout(timeout, units);
+  }
+
+  /**
+   * Returns the timeout for calls from this instance of Functions.
+   *
+   * @return The timeout, in milliseconds.
+   */
+  public long getTimeout() {
+    return options.getTimeout();
+  }
+
+  /**
+   * Creates a new reference with the given timeout for calls. The default is 60 seconds.
+   *
+   * @param timeout The length of the timeout, in the given units.
+   * @param units The units for the specified timeout.
+   */
+  @NonNull
+  public HttpsCallableReference withTimeout(long timeout, @NonNull TimeUnit units) {
+    HttpsCallableReference other = new HttpsCallableReference(functionsClient, name);
+    other.setTimeout(timeout, units);
+    return other;
   }
 }

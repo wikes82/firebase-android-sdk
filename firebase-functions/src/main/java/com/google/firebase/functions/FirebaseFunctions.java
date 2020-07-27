@@ -16,9 +16,10 @@ package com.google.firebase.functions;
 
 import android.content.Context;
 import android.os.Handler;
-import android.support.annotation.Nullable;
-import android.support.annotation.VisibleForTesting;
 import android.util.Log;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.annotation.VisibleForTesting;
 import com.google.android.gms.common.internal.Preconditions;
 import com.google.android.gms.security.ProviderInstaller;
 import com.google.android.gms.security.ProviderInstaller.ProviderInstallListener;
@@ -26,19 +27,21 @@ import com.google.android.gms.tasks.Task;
 import com.google.android.gms.tasks.TaskCompletionSource;
 import com.google.android.gms.tasks.Tasks;
 import com.google.firebase.FirebaseApp;
+import com.google.firebase.emulators.EmulatedServiceSettings;
 import com.google.firebase.functions.FirebaseFunctionsException.Code;
-import com.squareup.okhttp.Call;
-import com.squareup.okhttp.Callback;
-import com.squareup.okhttp.MediaType;
-import com.squareup.okhttp.OkHttpClient;
-import com.squareup.okhttp.Request;
-import com.squareup.okhttp.RequestBody;
-import com.squareup.okhttp.Response;
 import java.io.IOException;
+import java.io.InterruptedIOException;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.HashMap;
 import java.util.Map;
+import okhttp3.Call;
+import okhttp3.Callback;
+import okhttp3.MediaType;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -53,6 +56,9 @@ public class FirebaseFunctions {
    * providerInstalled lock.
    */
   private static boolean providerInstallStarted = false;
+
+  // The FirebaseApp instance
+  private final FirebaseApp app;
 
   // The network client to use for HTTPS requests.
   private final OkHttpClient client;
@@ -72,8 +78,16 @@ public class FirebaseFunctions {
   // The format to use for constructing urls from region, projectId, and name.
   private String urlFormat = "https://%1$s-%2$s.cloudfunctions.net/%3$s";
 
+  // Emulator settings
+  @Nullable private EmulatedServiceSettings emulatorSettings;
+
   FirebaseFunctions(
-      Context context, String projectId, String region, ContextProvider contextProvider) {
+      FirebaseApp app,
+      Context context,
+      String projectId,
+      String region,
+      ContextProvider contextProvider) {
+    this.app = app;
     this.client = new OkHttpClient();
     this.serializer = new Serializer();
     this.contextProvider = Preconditions.checkNotNull(contextProvider);
@@ -126,7 +140,8 @@ public class FirebaseFunctions {
    * @param app The app for the Firebase project.
    * @param region The region for the HTTPS trigger, such as "us-central1".
    */
-  public static FirebaseFunctions getInstance(FirebaseApp app, String region) {
+  @NonNull
+  public static FirebaseFunctions getInstance(@NonNull FirebaseApp app, @NonNull String region) {
     Preconditions.checkNotNull(app, "You must call FirebaseApp.initializeApp first.");
     Preconditions.checkNotNull(region);
 
@@ -141,7 +156,8 @@ public class FirebaseFunctions {
    *
    * @param app The app for the Firebase project.
    */
-  public static FirebaseFunctions getInstance(FirebaseApp app) {
+  @NonNull
+  public static FirebaseFunctions getInstance(@NonNull FirebaseApp app) {
     return getInstance(app, "us-central1");
   }
 
@@ -150,17 +166,20 @@ public class FirebaseFunctions {
    *
    * @param region The region for the HTTPS trigger, such as "us-central1".
    */
-  public static FirebaseFunctions getInstance(String region) {
+  @NonNull
+  public static FirebaseFunctions getInstance(@NonNull String region) {
     return getInstance(FirebaseApp.getInstance(), region);
   }
 
   /** Creates a Cloud Functions client with the default app. */
+  @NonNull
   public static FirebaseFunctions getInstance() {
     return getInstance(FirebaseApp.getInstance(), "us-central1");
   }
 
   /** Returns a reference to the Callable HTTPS trigger with the given name. */
-  public HttpsCallableReference getHttpsCallable(String name) {
+  @NonNull
+  public HttpsCallableReference getHttpsCallable(@NonNull String name) {
     return new HttpsCallableReference(this, name);
   }
 
@@ -172,6 +191,16 @@ public class FirebaseFunctions {
    */
   @VisibleForTesting
   URL getURL(String function) {
+    EmulatedServiceSettings emulatorSettings = this.emulatorSettings;
+    if (emulatorSettings != null) {
+      urlFormat =
+          "http://"
+              + emulatorSettings.getHost()
+              + ":"
+              + emulatorSettings.getPort()
+              + "/%2$s/%1$s/%3$s";
+    }
+
     String str = String.format(urlFormat, region, projectId, function);
     try {
       return new URL(str);
@@ -180,14 +209,22 @@ public class FirebaseFunctions {
     }
   }
 
-  /**
-   * Changes this instance to point to a Cloud Functions emulator running locally. See
-   * https://firebase.google.com/docs/functions/local-emulator
-   *
-   * @param origin The origin of the local emulator, such as "http://10.0.2.2:5005".
-   */
-  public void useFunctionsEmulator(String origin) {
+  /** @deprecated see {@link #useEmulator(String, int)} */
+  public void useFunctionsEmulator(@NonNull String origin) {
+    Preconditions.checkNotNull(origin, "origin cannot be null");
     urlFormat = origin + "/%2$s/%1$s/%3$s";
+  }
+
+  /**
+   * Modify this FirebaseFunctions instance to communicate with the Cloud Functions emulator.
+   *
+   * <p>Note: this must be called before this instance has been used to do any operations.
+   *
+   * @param host the emulator host (ex: 10.0.2.2)
+   * @param port the emulator port (ex: 5001)
+   */
+  public void useEmulator(@NonNull String host, int port) {
+    this.emulatorSettings = new EmulatedServiceSettings(host, port);
   }
 
   /**
@@ -197,7 +234,7 @@ public class FirebaseFunctions {
    * @param data Parameters to pass to the function. Can be anything encodable as JSON.
    * @return A Task that will be completed when the request is complete.
    */
-  Task<HttpsCallableResult> call(String name, @Nullable Object data) {
+  Task<HttpsCallableResult> call(String name, @Nullable Object data, HttpsCallOptions options) {
     return providerInstalled
         .getTask()
         .continueWithTask(task -> contextProvider.getContext())
@@ -207,7 +244,7 @@ public class FirebaseFunctions {
                 return Tasks.forException(task.getException());
               }
               HttpsCallableContext context = task.getResult();
-              return call(name, data, context);
+              return call(name, data, context, options);
             });
   }
 
@@ -220,10 +257,11 @@ public class FirebaseFunctions {
    * @return A Task that will be completed when the request is complete.
    */
   private Task<HttpsCallableResult> call(
-      String name, @Nullable Object data, HttpsCallableContext context) {
-    if (name == null) {
-      throw new IllegalArgumentException("name cannot be null");
-    }
+      @NonNull String name,
+      @Nullable Object data,
+      HttpsCallableContext context,
+      HttpsCallOptions options) {
+    Preconditions.checkNotNull(name, "name cannot be null");
     URL url = getURL(name);
 
     Map<String, Object> body = new HashMap<>();
@@ -243,17 +281,28 @@ public class FirebaseFunctions {
       request = request.header("Firebase-Instance-ID-Token", context.getInstanceIdToken());
     }
 
+    OkHttpClient callClient = options.apply(client);
+    Call call = callClient.newCall(request.build());
+
     TaskCompletionSource<HttpsCallableResult> tcs = new TaskCompletionSource<>();
-    Call call = client.newCall(request.build());
     call.enqueue(
         new Callback() {
           @Override
-          public void onFailure(Request request, IOException e) {
-            tcs.setException(e);
+          public void onFailure(Call ignored, IOException e) {
+            if (e instanceof InterruptedIOException) {
+              FirebaseFunctionsException exception =
+                  new FirebaseFunctionsException(
+                      Code.DEADLINE_EXCEEDED.name(), Code.DEADLINE_EXCEEDED, null, e);
+              tcs.setException(exception);
+            } else {
+              FirebaseFunctionsException exception =
+                  new FirebaseFunctionsException(Code.INTERNAL.name(), Code.INTERNAL, null, e);
+              tcs.setException(exception);
+            }
           }
 
           @Override
-          public void onResponse(Response response) throws IOException {
+          public void onResponse(Call ignored, Response response) throws IOException {
             Code code = Code.fromHttpStatus(response.code());
             String body = response.body().string();
 

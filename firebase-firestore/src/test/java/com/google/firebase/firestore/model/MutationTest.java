@@ -30,6 +30,8 @@ import static com.google.firebase.firestore.testutil.TestUtil.version;
 import static com.google.firebase.firestore.testutil.TestUtil.wrap;
 import static com.google.firebase.firestore.testutil.TestUtil.wrapObject;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 import com.google.firebase.Timestamp;
 import com.google.firebase.firestore.FieldValue;
@@ -41,12 +43,11 @@ import com.google.firebase.firestore.model.mutation.MutationResult;
 import com.google.firebase.firestore.model.mutation.PatchMutation;
 import com.google.firebase.firestore.model.mutation.Precondition;
 import com.google.firebase.firestore.model.mutation.TransformMutation;
-import com.google.firebase.firestore.model.value.ObjectValue;
-import com.google.firebase.firestore.model.value.ServerTimestampValue;
-import com.google.firebase.firestore.model.value.StringValue;
-import com.google.firebase.firestore.model.value.TimestampValue;
+import com.google.firestore.v1.Value;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -153,10 +154,8 @@ public class MutationTest {
     // Server timestamps aren't parsed, so we manually insert it.
     ObjectValue expectedData =
         wrapObject(map("foo", map("bar", "<server-timestamp>"), "baz", "baz-value"));
-    expectedData =
-        expectedData.set(
-            field("foo.bar"),
-            new ServerTimestampValue(timestamp, StringValue.valueOf("bar-value")));
+    Value fieldValue = ServerTimestamps.valueOf(timestamp, wrap("bar-value"));
+    expectedData = expectedData.toBuilder().set(field("foo.bar"), fieldValue).build();
 
     Document expectedDoc =
         new Document(
@@ -167,7 +166,139 @@ public class MutationTest {
     assertEquals(expectedDoc, transformedDoc);
   }
 
-  // NOTE: This is more a test of UserDataConverter code than Mutation code but we don't have unit
+  @Test
+  public void testAppliesIncrementTransformToDocument() {
+    Map<String, Object> baseDoc =
+        map(
+            "longPlusLong",
+            1,
+            "longPlusDouble",
+            2,
+            "doublePlusLong",
+            3.3,
+            "doublePlusDouble",
+            4.0,
+            "longPlusNan",
+            5,
+            "doublePlusNan",
+            6.6,
+            "longPlusInfinity",
+            7,
+            "doublePlusInfinity",
+            8.8);
+    Map<String, Object> transform =
+        map(
+            "longPlusLong",
+            FieldValue.increment(1),
+            "longPlusDouble",
+            FieldValue.increment(2.2),
+            "doublePlusLong",
+            FieldValue.increment(3),
+            "doublePlusDouble",
+            FieldValue.increment(4.4),
+            "longPlusNan",
+            FieldValue.increment(Double.NaN),
+            "doublePlusNan",
+            FieldValue.increment(Double.NaN),
+            "longPlusInfinity",
+            FieldValue.increment(Double.POSITIVE_INFINITY),
+            "doublePlusInfinity",
+            FieldValue.increment(Double.POSITIVE_INFINITY));
+    Map<String, Object> expected =
+        map(
+            "longPlusLong",
+            2L,
+            "longPlusDouble",
+            4.2D,
+            "doublePlusLong",
+            6.3D,
+            "doublePlusDouble",
+            8.4D,
+            "longPlusNan",
+            Double.NaN,
+            "doublePlusNan",
+            Double.NaN,
+            "longPlusInfinity",
+            Double.POSITIVE_INFINITY,
+            "doublePlusInfinity",
+            Double.POSITIVE_INFINITY);
+
+    verifyTransform(baseDoc, transform, expected);
+  }
+
+  @Test
+  public void testAppliesIncrementTransformToUnexpectedType() {
+    Map<String, Object> baseDoc = map("string", "zero");
+    Map<String, Object> transform = map("string", FieldValue.increment(1));
+    Map<String, Object> expected = map("string", 1);
+    verifyTransform(baseDoc, transform, expected);
+  }
+
+  @Test
+  public void testAppliesIncrementTransformToMissingField() {
+    Map<String, Object> baseDoc = map();
+    Map<String, Object> transform = map("missing", FieldValue.increment(1));
+    Map<String, Object> expected = map("missing", 1);
+    verifyTransform(baseDoc, transform, expected);
+  }
+
+  @Test
+  public void testAppliesIncrementTransformsConsecutively() {
+    Map<String, Object> baseDoc = map("number", 1);
+    Map<String, Object> transform1 = map("number", FieldValue.increment(2));
+    Map<String, Object> transform2 = map("number", FieldValue.increment(3));
+    Map<String, Object> transform3 = map("number", FieldValue.increment(4));
+    Map<String, Object> expected = map("number", 10);
+    verifyTransform(baseDoc, Arrays.asList(transform1, transform2, transform3), expected);
+  }
+
+  @Test
+  public void testAppliesIncrementWithoutOverflow() {
+    Map<String, Object> baseDoc =
+        map(
+            "a",
+            Long.MAX_VALUE - 1,
+            "b",
+            Long.MAX_VALUE - 1,
+            "c",
+            Long.MAX_VALUE,
+            "d",
+            Long.MAX_VALUE);
+    Map<String, Object> transform =
+        map(
+            "a", FieldValue.increment(1),
+            "b", FieldValue.increment(Long.MAX_VALUE),
+            "c", FieldValue.increment(1),
+            "d", FieldValue.increment(Long.MAX_VALUE));
+    Map<String, Object> expected =
+        map("a", Long.MAX_VALUE, "b", Long.MAX_VALUE, "c", Long.MAX_VALUE, "d", Long.MAX_VALUE);
+    verifyTransform(baseDoc, transform, expected);
+  }
+
+  @Test
+  public void testAppliesIncrementWithoutUnderflow() {
+    Map<String, Object> baseDoc =
+        map(
+            "a",
+            Long.MIN_VALUE + 1,
+            "b",
+            Long.MIN_VALUE + 1,
+            "c",
+            Long.MIN_VALUE,
+            "d",
+            Long.MIN_VALUE);
+    Map<String, Object> transform =
+        map(
+            "a", FieldValue.increment(-1),
+            "b", FieldValue.increment(Long.MIN_VALUE),
+            "c", FieldValue.increment(-1),
+            "d", FieldValue.increment(Long.MIN_VALUE));
+    Map<String, Object> expected =
+        map("a", Long.MIN_VALUE, "b", Long.MIN_VALUE, "c", Long.MIN_VALUE, "d", Long.MIN_VALUE);
+    verifyTransform(baseDoc, transform, expected);
+  }
+
+  // NOTE: This is more a test of UserDataReader code than Mutation code but we don't have unit
   // tests for it currently. We could consider removing this test once we have integration tests.
   @Test
   public void testCreateArrayUnionTransform() {
@@ -175,9 +306,10 @@ public class MutationTest {
         transformMutation(
             "collection/key",
             map(
-                "a", FieldValue.arrayUnion("tag"),
+                "a",
+                FieldValue.arrayUnion("tag"),
                 "bar.baz",
-                    FieldValue.arrayUnion(true, map("nested", map("a", Arrays.asList(1, 2))))));
+                FieldValue.arrayUnion(true, map("nested", map("a", Arrays.asList(1, 2))))));
     assertEquals(2, transform.getFieldTransforms().size());
 
     FieldTransform first = transform.getFieldTransforms().get(0);
@@ -190,11 +322,11 @@ public class MutationTest {
     assertEquals(field("bar.baz"), second.getFieldPath());
     assertEquals(
         new ArrayTransformOperation.Union(
-            Arrays.asList(wrap(true), wrapObject(map("nested", map("a", Arrays.asList(1, 2)))))),
+            Arrays.asList(wrap(true), wrap(map("nested", map("a", Arrays.asList(1, 2)))))),
         second.getOperation());
   }
 
-  // NOTE: This is more a test of UserDataConverter code than Mutation code but
+  // NOTE: This is more a test of UserDataReader code than Mutation code but
   // we don't have unit tests for it currently. We could consider removing this
   // test once we have integration tests.
   @Test
@@ -325,15 +457,42 @@ public class MutationTest {
 
   private void verifyTransform(
       Map<String, Object> baseData,
-      Map<String, Object> transformData,
+      List<Map<String, Object>> transforms,
       Map<String, Object> expectedData) {
-    Document baseDoc = doc("collection/key", 0, baseData);
-    TransformMutation transform = transformMutation("collection/key", transformData);
-    MaybeDocument transformedDoc = transform.applyToLocalView(baseDoc, baseDoc, Timestamp.now());
+    MaybeDocument currentDoc = doc("collection/key", 0, baseData);
+
+    for (Map<String, Object> transformData : transforms) {
+      TransformMutation transform = transformMutation("collection/key", transformData);
+      currentDoc = transform.applyToLocalView(currentDoc, currentDoc, Timestamp.now());
+    }
 
     Document expectedDoc =
         doc("collection/key", 0, expectedData, Document.DocumentState.LOCAL_MUTATIONS);
-    assertEquals(expectedDoc, transformedDoc);
+    assertEquals(expectedDoc, currentDoc);
+  }
+
+  private void verifyTransform(
+      Map<String, Object> baseData,
+      Map<String, Object> transformData,
+      Map<String, Object> expectedData) {
+    verifyTransform(baseData, Collections.singletonList(transformData), expectedData);
+  }
+
+  @Test
+  public void testAppliesServerAckedIncrementTransformToDocuments() {
+    Map<String, Object> data = map("sum", 1);
+    Document baseDoc = doc("collection/key", 0, data);
+
+    Mutation transform = transformMutation("collection/key", map("sum", FieldValue.increment(2)));
+    MutationResult mutationResult =
+        new MutationResult(version(1), Collections.singletonList(wrap(3L)));
+
+    MaybeDocument transformedDoc = transform.applyToRemoteDocument(baseDoc, mutationResult);
+
+    Map<String, Object> expectedData = map("sum", 3L);
+    assertEquals(
+        doc("collection/key", 1, expectedData, Document.DocumentState.COMMITTED_MUTATIONS),
+        transformedDoc);
   }
 
   @Test
@@ -347,8 +506,7 @@ public class MutationTest {
     Timestamp serverTimestamp = new Timestamp(2, 0);
 
     MutationResult mutationResult =
-        new MutationResult(
-            version(1), Collections.singletonList(TimestampValue.valueOf(serverTimestamp)));
+        new MutationResult(version(1), Collections.singletonList(wrap(serverTimestamp)));
 
     MaybeDocument transformedDoc = transform.applyToRemoteDocument(baseDoc, mutationResult);
 
@@ -459,5 +617,90 @@ public class MutationTest {
     assertVersionTransitions(delete, docV3, mutationResult, docV7Deleted);
     assertVersionTransitions(delete, deletedV3, mutationResult, docV7Deleted);
     assertVersionTransitions(delete, null, mutationResult, docV7Deleted);
+  }
+
+  @Test
+  public void testNonTransformMutationBaseValue() {
+    Map<String, Object> data = map("foo", "foo");
+    Document baseDoc = doc("collection/key", 0, data);
+
+    Mutation set = setMutation("collection/key", map("foo", "bar"));
+    assertNull(set.extractBaseValue(baseDoc));
+
+    Mutation patch = patchMutation("collection/key", map("foo", "bar"));
+    assertNull(patch.extractBaseValue(baseDoc));
+
+    Mutation delete = deleteMutation("collection/key");
+    assertNull(delete.extractBaseValue(baseDoc));
+  }
+
+  @Test
+  public void testServerTimestampBaseValue() {
+    Map<String, Object> allValues = map("time", "foo");
+    allValues.put("nested", new HashMap<>(allValues));
+    Document baseDoc = doc("collection/key", 0, allValues);
+
+    Map<String, Object> allTransforms = map("time", FieldValue.serverTimestamp());
+    allTransforms.put("nested", new HashMap<>(allTransforms));
+
+    // Server timestamps are idempotent and don't have base values.
+    Mutation transformMutation = transformMutation("collection/key", allTransforms);
+    assertNull(transformMutation.extractBaseValue(baseDoc));
+  }
+
+  @Test
+  public void testNumericIncrementBaseValue() {
+    Map<String, Object> allValues =
+        map("ignore", "foo", "double", 42.0, "long", 42, "string", "foo", "map", map());
+    allValues.put("nested", new HashMap<>(allValues));
+    Document baseDoc = doc("collection/key", 0, allValues);
+
+    Map<String, Object> allTransforms =
+        map(
+            "double",
+            FieldValue.increment(1),
+            "long",
+            FieldValue.increment(1),
+            "string",
+            FieldValue.increment(1),
+            "map",
+            FieldValue.increment(1),
+            "missing",
+            FieldValue.increment(1));
+    allTransforms.put("nested", new HashMap<>(allTransforms));
+
+    Mutation transformMutation = transformMutation("collection/key", allTransforms);
+    ObjectValue baseValue = transformMutation.extractBaseValue(baseDoc);
+
+    Value expected =
+        wrap(
+            map(
+                "double",
+                42.0,
+                "long",
+                42,
+                "string",
+                0,
+                "map",
+                0,
+                "missing",
+                0,
+                "nested",
+                map("double", 42.0, "long", 42, "string", 0, "map", 0, "missing", 0)));
+    assertTrue(Values.equals(expected, baseValue.getProto()));
+  }
+
+  @Test
+  public void testIncrementTwice() {
+    Document baseDoc = doc("collection/key", 0, map("sum", "0"));
+
+    Map<String, Object> increment = map("sum", FieldValue.increment(1));
+    Mutation transformMutation = transformMutation("collection/key", increment);
+
+    MaybeDocument mutatedDoc =
+        transformMutation.applyToLocalView(baseDoc, baseDoc, Timestamp.now());
+    mutatedDoc = transformMutation.applyToLocalView(mutatedDoc, baseDoc, Timestamp.now());
+
+    assertEquals(wrap(2L), ((Document) mutatedDoc).getField(field("sum")));
   }
 }

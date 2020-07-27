@@ -16,16 +16,16 @@ package com.google.firebase.firestore.model.mutation;
 
 import static com.google.firebase.firestore.util.Assert.hardAssert;
 
+import androidx.annotation.Nullable;
 import com.google.firebase.Timestamp;
 import com.google.firebase.firestore.model.Document;
 import com.google.firebase.firestore.model.DocumentKey;
 import com.google.firebase.firestore.model.FieldPath;
 import com.google.firebase.firestore.model.MaybeDocument;
+import com.google.firebase.firestore.model.ObjectValue;
 import com.google.firebase.firestore.model.SnapshotVersion;
 import com.google.firebase.firestore.model.UnknownDocument;
-import com.google.firebase.firestore.model.value.FieldValue;
-import com.google.firebase.firestore.model.value.ObjectValue;
-import javax.annotation.Nullable;
+import com.google.firestore.v1.Value;
 
 /**
  * A mutation that modifies fields of the document at the given key with the given values. The
@@ -130,6 +130,12 @@ public final class PatchMutation extends Mutation {
     return new Document(getKey(), version, newData, Document.DocumentState.LOCAL_MUTATIONS);
   }
 
+  @Nullable
+  @Override
+  public ObjectValue extractBaseValue(@Nullable MaybeDocument maybeDoc) {
+    return null;
+  }
+
   /**
    * Patches the data of document if available or creates a new document. Note that this does not
    * check whether or not the precondition of this patch holds.
@@ -145,16 +151,17 @@ public final class PatchMutation extends Mutation {
   }
 
   private ObjectValue patchObject(ObjectValue obj) {
+    ObjectValue.Builder builder = obj.toBuilder();
     for (FieldPath path : mask.getMask()) {
       if (!path.isEmpty()) {
-        FieldValue newValue = value.get(path);
+        Value newValue = value.get(path);
         if (newValue == null) {
-          obj = obj.delete(path);
+          builder.delete(path);
         } else {
-          obj = obj.set(path, newValue);
+          builder.set(path, newValue);
         }
       }
     }
-    return obj;
+    return builder.build();
   }
 }

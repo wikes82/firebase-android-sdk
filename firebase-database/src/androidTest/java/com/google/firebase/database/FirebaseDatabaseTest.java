@@ -14,14 +14,14 @@
 
 package com.google.firebase.database;
 
-import static com.google.firebase.database.TestHelpers.fromSingleQuotedString;
+import static com.google.firebase.database.IntegrationTestHelpers.fromSingleQuotedString;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.fail;
 
-import android.support.test.InstrumentationRegistry;
-import android.support.test.runner.AndroidJUnit4;
+import androidx.test.ext.junit.runners.AndroidJUnit4;
+import androidx.test.platform.app.InstrumentationRegistry;
 import com.google.firebase.FirebaseApp;
 import com.google.firebase.FirebaseOptions;
 import com.google.firebase.database.core.DatabaseConfig;
@@ -35,7 +35,6 @@ import java.util.Arrays;
 import java.util.List;
 import org.junit.After;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
@@ -44,14 +43,9 @@ import org.junit.Test;
 public class FirebaseDatabaseTest {
   @Rule public RetryRule retryRule = new RetryRule(3);
 
-  @Before
-  public void setup() {
-    TestHelpers.ensureAppInitialized();
-  }
-
   @After
   public void tearDown() {
-    TestHelpers.failOnFirstUncaughtException();
+    IntegrationTestHelpers.failOnFirstUncaughtException();
   }
 
   @Test
@@ -68,6 +62,43 @@ public class FirebaseDatabaseTest {
     FirebaseDatabase db = FirebaseDatabase.getInstance(app);
 
     assertEquals(IntegrationTestValues.getAltNamespace(), db.getReference().toString());
+  }
+
+  @Test
+  public void getInstanceForAppWithEmulator() {
+    FirebaseApp app =
+        appForDatabaseUrl(IntegrationTestValues.getAltNamespace(), "getInstanceForAppWithEmulator");
+
+    FirebaseDatabase db = FirebaseDatabase.getInstance(app);
+    db.useEmulator("10.0.2.2", 9000);
+
+    DatabaseReference rootRef = db.getReference();
+    assertEquals(rootRef.toString(), "http://10.0.2.2:9000");
+
+    DatabaseReference urlReference = db.getReferenceFromUrl("https://otherns.firebaseio.com");
+    assertEquals(urlReference.toString(), "http://10.0.2.2:9000");
+
+    DatabaseReference urlReferenceWithPath =
+        db.getReferenceFromUrl("https://otherns.firebaseio.com/foo");
+    assertEquals(urlReferenceWithPath.toString(), "http://10.0.2.2:9000/foo");
+  }
+
+  @Test
+  public void getInstanceForAppWithEmulator_throwsIfSetLate() {
+    FirebaseApp app =
+        appForDatabaseUrl(
+            IntegrationTestValues.getAltNamespace(),
+            "getInstanceForAppWithEmulator_throwsIfSetLate");
+
+    FirebaseDatabase db = FirebaseDatabase.getInstance(app);
+    DatabaseReference rootRef = db.getReference();
+
+    try {
+      db.useEmulator("10.0.2.2", 9000);
+      fail("Expected to throw");
+    } catch (IllegalStateException e) {
+      // Expected to throw
+    }
   }
 
   @Test
@@ -158,7 +189,7 @@ public class FirebaseDatabaseTest {
 
   @Test
   public void persistenceSettings() {
-    DatabaseConfig config = TestHelpers.newTestConfig();
+    DatabaseConfig config = IntegrationTestHelpers.newTestConfig();
 
     try {
       config.setPersistenceCacheSizeBytes(1 * 1024 * 1024 - 1);
@@ -176,7 +207,7 @@ public class FirebaseDatabaseTest {
     config.setPersistenceCacheSizeBytes(1 * 1024 * 1024);
 
     try {
-      FirebaseDatabase db = new DatabaseReference("", config).getDatabase();
+      FirebaseDatabase db = new DatabaseReference("http://localhost", config).getDatabase();
       db.setPersistenceCacheSizeBytes(1 * 1024 * 1024);
       fail("should throw - can't modify after init");
     } catch (DatabaseException e) {
@@ -250,11 +281,11 @@ public class FirebaseDatabaseTest {
   }
 
   private static DatabaseReference rootRefWithEngine(MockPersistenceStorageEngine engine) {
-    DatabaseConfig config = TestHelpers.newTestConfig();
+    DatabaseConfig config = IntegrationTestHelpers.newTestConfig();
     PersistenceManager persistenceManager =
         new DefaultPersistenceManager(config, engine, CachePolicy.NONE);
-    TestHelpers.setForcedPersistentCache(config, persistenceManager);
-    return TestHelpers.rootWithConfig(config);
+    IntegrationTestHelpers.setForcedPersistentCache(config, persistenceManager);
+    return IntegrationTestHelpers.rootWithConfig(config);
   }
 
   @Test
@@ -270,12 +301,12 @@ public class FirebaseDatabaseTest {
     ref.push().setValue("test-value-3");
     ref.push().setValue("test-value-4");
 
-    TestHelpers.waitForQueue(ref);
+    IntegrationTestHelpers.waitForQueue(ref);
     Assert.assertEquals(4, engine.loadUserWrites().size());
 
     app.purgeOutstandingWrites();
 
-    TestHelpers.waitForQueue(ref);
+    IntegrationTestHelpers.waitForQueue(ref);
     Assert.assertEquals(0, engine.loadUserWrites().size());
   }
 
@@ -332,12 +363,12 @@ public class FirebaseDatabaseTest {
               }
             });
 
-    TestHelpers.waitForQueue(ref);
+    IntegrationTestHelpers.waitForQueue(ref);
     Assert.assertEquals(4, engine.loadUserWrites().size());
 
     app.purgeOutstandingWrites();
 
-    TestHelpers.waitForEvents(ref);
+    IntegrationTestHelpers.waitForEvents(ref);
     assertEquals(Arrays.asList("1", "2", "3", "4"), order);
   }
 
@@ -374,11 +405,11 @@ public class FirebaseDatabaseTest {
               }
             });
 
-    TestHelpers.waitForEvents(ref);
+    IntegrationTestHelpers.waitForEvents(ref);
 
     app.purgeOutstandingWrites();
 
-    TestHelpers.waitForEvents(ref);
+    IntegrationTestHelpers.waitForEvents(ref);
     assertEquals(Arrays.asList("1", "2"), order);
   }
 
@@ -484,7 +515,7 @@ public class FirebaseDatabaseTest {
 
     app.purgeOutstandingWrites();
 
-    TestHelpers.waitForEvents(ref);
+    IntegrationTestHelpers.waitForEvents(ref);
 
     assertEquals(Arrays.asList("foo-1", "bar", "foo-2"), cancelOrder);
 
@@ -494,7 +525,7 @@ public class FirebaseDatabaseTest {
 
     app.goOnline();
     // Make sure we're back online and reconnected again
-    TestHelpers.waitForEvents(ref);
+    IntegrationTestHelpers.waitForEvents(ref);
 
     // No events should be reraised...
     assertEquals(expectedFooValues, fooValues);
@@ -522,7 +553,7 @@ public class FirebaseDatabaseTest {
         });
 
     // Make sure the first value event is fired
-    TestHelpers.waitForRoundtrip(ref);
+    IntegrationTestHelpers.waitForRoundtrip(ref);
 
     app.goOffline();
 
@@ -558,7 +589,7 @@ public class FirebaseDatabaseTest {
 
     ref.getDatabase().purgeOutstandingWrites();
 
-    TestHelpers.waitForEvents(ref);
+    IntegrationTestHelpers.waitForEvents(ref);
 
     // The order should really be cancel-1 then cancel-2, but too difficult to implement currently.
     assertEquals(
@@ -572,7 +603,7 @@ public class FirebaseDatabaseTest {
 
   private static FirebaseApp appForDatabaseUrl(String url, String name) {
     return FirebaseApp.initializeApp(
-        InstrumentationRegistry.getTargetContext(),
+        InstrumentationRegistry.getInstrumentation().getTargetContext(),
         new FirebaseOptions.Builder()
             .setApplicationId("appid")
             .setApiKey("apikey")

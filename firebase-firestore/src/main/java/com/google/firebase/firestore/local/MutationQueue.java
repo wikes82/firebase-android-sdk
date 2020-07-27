@@ -14,6 +14,7 @@
 
 package com.google.firebase.firestore.local;
 
+import androidx.annotation.Nullable;
 import com.google.firebase.Timestamp;
 import com.google.firebase.firestore.core.Query;
 import com.google.firebase.firestore.model.DocumentKey;
@@ -21,7 +22,6 @@ import com.google.firebase.firestore.model.mutation.Mutation;
 import com.google.firebase.firestore.model.mutation.MutationBatch;
 import com.google.protobuf.ByteString;
 import java.util.List;
-import javax.annotation.Nullable;
 
 /** A queue of mutations to apply to the remote store. */
 interface MutationQueue {
@@ -43,8 +43,17 @@ interface MutationQueue {
   /** Sets the stream token for this mutation queue. */
   void setLastStreamToken(ByteString streamToken);
 
-  /** Creates a new mutation batch and adds it to this mutation queue. */
-  MutationBatch addMutationBatch(Timestamp localWriteTime, List<Mutation> mutations);
+  /**
+   * Creates a new mutation batch and adds it to this mutation queue.
+   *
+   * @param localWriteTime The original write time of this mutation.
+   * @param baseMutations Mutations that are used to populate the base values when this mutation is
+   *     applied locally. These mutations are used to locally overwrite values that are persisted in
+   *     the remote document cache.
+   * @param mutations The user-provided mutations in this mutation batch.
+   */
+  MutationBatch addMutationBatch(
+      Timestamp localWriteTime, List<Mutation> baseMutations, List<Mutation> mutations);
 
   /** Loads the mutation batch with the given batchId. */
   @Nullable
@@ -60,6 +69,12 @@ interface MutationQueue {
    */
   @Nullable
   MutationBatch getNextMutationBatchAfterBatchId(int batchId);
+
+  /**
+   * @return The largest (latest) batch id in mutation queue for the current user that is pending
+   *     server response, {@link MutationBatch#UNKNOWN} if the queue is empty.
+   */
+  int getHighestUnacknowledgedBatchId();
 
   /** Returns all mutation batches in the mutation queue. */
   // TODO: PERF: Current consumer only needs mutated keys; if we can provide that

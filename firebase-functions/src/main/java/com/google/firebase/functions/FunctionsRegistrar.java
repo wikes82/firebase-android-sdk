@@ -15,13 +15,14 @@
 package com.google.firebase.functions;
 
 import android.content.Context;
-import android.support.annotation.Keep;
-import com.google.firebase.FirebaseOptions;
+import androidx.annotation.Keep;
+import com.google.firebase.FirebaseApp;
 import com.google.firebase.auth.internal.InternalAuthProvider;
 import com.google.firebase.components.Component;
 import com.google.firebase.components.ComponentRegistrar;
 import com.google.firebase.components.Dependency;
 import com.google.firebase.iid.internal.FirebaseInstanceIdInternal;
+import com.google.firebase.platforminfo.LibraryVersionComponent;
 import java.util.Arrays;
 import java.util.List;
 
@@ -47,13 +48,14 @@ public class FunctionsRegistrar implements ComponentRegistrar {
         Component.builder(FunctionsMultiResourceComponent.class)
             .add(Dependency.required(Context.class))
             .add(Dependency.required(ContextProvider.class))
-            .add(Dependency.required(FirebaseOptions.class))
+            .add(Dependency.required(FirebaseApp.class))
             .factory(
                 c ->
                     new FunctionsMultiResourceComponent(
                         c.get(Context.class),
                         c.get(ContextProvider.class),
-                        c.get(FirebaseOptions.class).getProjectId()))
-            .build());
+                        c.get(FirebaseApp.class)))
+            .build(),
+        LibraryVersionComponent.create("fire-fn", BuildConfig.VERSION_NAME));
   }
 }

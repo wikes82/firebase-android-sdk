@@ -19,22 +19,26 @@ import static com.google.firebase.firestore.testutil.IntegrationTestUtil.testDoc
 import static com.google.firebase.firestore.testutil.IntegrationTestUtil.waitFor;
 import static com.google.firebase.firestore.testutil.TestUtil.expectError;
 import static com.google.firebase.firestore.testutil.TestUtil.map;
-import static junit.framework.Assert.assertEquals;
+import static org.junit.Assert.assertEquals;
 
-import android.support.test.runner.AndroidJUnit4;
+import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.google.android.gms.tasks.Task;
 import com.google.android.gms.tasks.Tasks;
 import com.google.firebase.Timestamp;
 import com.google.firebase.firestore.testutil.IntegrationTestUtil;
+import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.HashMap;
+import java.util.Map;
+import javax.annotation.Nullable;
 import org.junit.After;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
 @RunWith(AndroidJUnit4.class)
 public class POJOTest {
-  public static class POJO {
+  public static final class POJO {
 
     double number;
     String str;
@@ -119,7 +123,7 @@ public class POJOTest {
       if (this == o) {
         return true;
       }
-      if (o == null || getClass() != o.getClass()) {
+      if (o == null || !(o instanceof POJO)) {
         return false;
       }
 
@@ -164,6 +168,67 @@ public class POJOTest {
     }
   }
 
+  public static class InvalidPOJO {
+    @Nullable BigInteger bigIntegerValue = null;
+    @Nullable Byte byteValue = null;
+    @Nullable Short shortValue = null;
+
+    @Nullable
+    public BigInteger getBigIntegerValue() {
+      return bigIntegerValue;
+    }
+
+    public void setBigIntegerValue(@Nullable BigInteger bigIntegerValue) {
+      this.bigIntegerValue = bigIntegerValue;
+    }
+
+    @Nullable
+    public Byte getByteValue() {
+      return byteValue;
+    }
+
+    public void setByteValue(@Nullable Byte byteValue) {
+      this.byteValue = byteValue;
+    }
+
+    @Nullable
+    public Short getShortValue() {
+      return shortValue;
+    }
+
+    public void setShortValue(@Nullable Short shortValue) {
+      this.shortValue = shortValue;
+    }
+  }
+
+  public static final class POJOWithDocumentIdAnnotation {
+    String str;
+    @DocumentId public DocumentReference autoPopulatedReference;
+    @DocumentId String docReferenceId;
+
+    static class NestedPOJO {
+      @DocumentId public DocumentReference autoPopulatedReference;
+    }
+
+    public NestedPOJO nested = new NestedPOJO();
+
+    public String getDocReferenceId() {
+      return docReferenceId;
+    }
+
+    public void setDocReferenceId(String id) {
+      this.docReferenceId = id;
+    }
+
+    public String getStr() {
+      return str;
+    }
+
+    public void setStr(String str) {
+      this.str = str;
+    }
+  }
+
   @After
   public void tearDown() {
     IntegrationTestUtil.tearDown();
@@ -177,6 +242,20 @@ public class POJOTest {
     DocumentSnapshot doc = waitFor(reference.get());
     POJO otherData = doc.toObject(POJO.class);
     assertEquals(data, otherData);
+  }
+
+  @Test
+  public void testDocumentIdAnnotation() {
+    CollectionReference collection = testCollection();
+    POJOWithDocumentIdAnnotation data = new POJOWithDocumentIdAnnotation();
+    data.setStr("name");
+    DocumentReference reference = waitFor(collection.add(data));
+    DocumentSnapshot doc = waitFor(reference.get());
+    POJOWithDocumentIdAnnotation readFromStore = doc.toObject(POJOWithDocumentIdAnnotation.class);
+    assertEquals("name", readFromStore.getStr());
+    assertEquals(reference, readFromStore.autoPopulatedReference);
+    assertEquals(reference, readFromStore.nested.autoPopulatedReference);
+    assertEquals(reference.getId(), readFromStore.getDocReferenceId());
   }
 
   @Test
@@ -252,5 +331,62 @@ public class POJOTest {
     expectError(
         () -> reference.set(new POJO(), SetOptions.mergeFields("str", "missing")),
         "Field 'missing' is specified in your field mask but not in your input data.");
+  }
+
+  @Test
+  public void testCantWriteNonStandardNumberTypes() {
+    DocumentReference ref = testDocument();
+
+    Map<InvalidPOJO, String> expectedErrorMessages = new HashMap<>();
+
+    InvalidPOJO pojo = new InvalidPOJO();
+    pojo.bigIntegerValue = new BigInteger("0");
+    expectedErrorMessages.put(
+        pojo,
+        "Could not serialize object. Numbers of type BigInteger are not supported, please use an int, long, float or double (found in field 'bigIntegerValue')");
+
+    pojo = new InvalidPOJO();
+    pojo.byteValue = 0;
+    expectedErrorMessages.put(
+        pojo,
+        "Could not serialize object. Numbers of type Byte are not supported, please use an int, long, float or double (found in field 'byteValue')");
+
+    pojo = new InvalidPOJO();
+    pojo.shortValue = 0;
+    expectedErrorMessages.put(
+        pojo,
+        "Could not serialize object. Numbers of type Short are not supported, please use an int, long, float or double (found in field 'shortValue')");
+
+    for (Map.Entry<InvalidPOJO, String> testCase : expectedErrorMessages.entrySet()) {
+      expectError(() -> ref.set(testCase.getKey()), testCase.getValue());
+    }
+  }
+
+  @Test
+  public void testCantReadBigInteger() {
+    DocumentReference ref = testDocument();
+
+    Map<String, Object> invalidData =
+        map(
+            "bigIntegerValue",
+            map("bigIntegerValue", 0),
+            "byteValue",
+            map("byteValue", 0),
+            "shortValue",
+            map("shortValue", 0));
+    waitFor(ref.set(invalidData));
+    DocumentSnapshot snap = waitFor(ref.get());
+
+    expectError(
+        () -> snap.get("bigIntegerValue", InvalidPOJO.class),
+        "Could not deserialize object. Deserializing values to BigInteger is not supported (found in field 'bigIntegerValue')");
+
+    expectError(
+        () -> snap.get("byteValue", InvalidPOJO.class),
+        "Could not deserialize object. Deserializing values to Byte is not supported (found in field 'byteValue')");
+
+    expectError(
+        () -> snap.get("shortValue", InvalidPOJO.class),
+        "Could not deserialize object. Deserializing values to Short is not supported (found in field 'shortValue')");
   }
 }

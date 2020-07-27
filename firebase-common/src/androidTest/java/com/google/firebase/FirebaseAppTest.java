@@ -17,12 +17,15 @@ package com.google.firebase;
 import static com.google.android.gms.common.util.Base64Utils.decodeUrlSafeNoPadding;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.firebase.common.testutil.Assert.assertThrows;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.reset;
-import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import android.content.BroadcastReceiver;
 import android.content.ComponentCallbacks2;
@@ -30,21 +33,18 @@ import android.content.Context;
 import android.content.ContextWrapper;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.support.annotation.NonNull;
-import android.support.test.InstrumentationRegistry;
-import android.support.test.runner.AndroidJUnit4;
-import android.support.v4.content.LocalBroadcastManager;
+import android.os.UserManager;
+import androidx.localbroadcastmanager.content.LocalBroadcastManager;
+import androidx.test.InstrumentationRegistry;
+import androidx.test.runner.AndroidJUnit4;
 import com.google.android.gms.common.api.internal.BackgroundDetector;
 import com.google.common.base.Defaults;
-import com.google.firebase.FirebaseApp.IdTokenListener;
-import com.google.firebase.FirebaseApp.IdTokenListenersCountChangedListener;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.components.EagerSdkVerifier;
 import com.google.firebase.components.InitTracker;
 import com.google.firebase.components.TestComponentOne;
 import com.google.firebase.components.TestComponentTwo;
 import com.google.firebase.components.TestUserAgentDependentComponent;
-import com.google.firebase.internal.InternalTokenResult;
 import com.google.firebase.platforminfo.UserAgentPublisher;
 import com.google.firebase.testing.FirebaseAppRule;
 import java.lang.reflect.InvocationTargetException;
@@ -53,15 +53,14 @@ import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.mockito.stubbing.Answer;
 
 /** Unit tests for {@link com.google.firebase.FirebaseApp}. */
 // TODO(arondeak): uncomment lines when Firebase API targets are in integ.
@@ -78,7 +77,7 @@ public class FirebaseAppTest {
 
   @Rule public FirebaseAppRule firebaseAppRule = new FirebaseAppRule();
 
-  private final AtomicBoolean isDeviceProtectedStorage = new AtomicBoolean(false);
+  private final AtomicBoolean isUserUnlocked = new AtomicBoolean(true);
   private Context targetContext;
   private BackgroundDetector backgroundDetector;
   private LocalBroadcastManager localBroadcastManager;
@@ -120,7 +119,6 @@ public class FirebaseAppTest {
 
   @Test
   public void testInitializeApp_shouldPublishUserAgentPublisherThatReturnsPublishedVersions() {
-    String[] expectedUserAgent = {"firebase-common/16.0.5", "test-component/1.2.3"};
     Context mockContext = createForwardingMockContext();
     FirebaseApp firebaseApp = FirebaseApp.initializeApp(mockContext);
 
@@ -144,9 +142,12 @@ public class FirebaseAppTest {
     String[] actualUserAgent = userAgentPublisher.getUserAgent().split(" ");
     Arrays.sort(actualUserAgent);
 
-    // After sorting the user agents are expected to be {"firebase-common/x.y.z",
-    // "test-component/1.2.3"}
-    assertThat(actualUserAgent[0]).contains("firebase-common");
+    // After sorting the user agents are expected to be {"fire-android/", "fire-auth/x.y.z",
+    // "fire-core/x.y.z", "test-component/1.2.3"}
+    assertThat(actualUserAgent[0]).contains("fire-analytics");
+    assertThat(actualUserAgent[1]).contains("fire-android");
+    assertThat(actualUserAgent[2]).contains("fire-auth");
+    assertThat(actualUserAgent[3]).contains("fire-core");
   }
 
   @Test
@@ -196,30 +197,6 @@ public class FirebaseAppTest {
     backgroundDetector.onActivityResumed(null);
     backgroundDetector.onTrimMemory(ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN);
     assertThat(callbackCount.get()).isEqualTo(2);
-  }
-
-  @Test
-  public void testDefaultIdTokenListenersCountChangedListener() {
-    FirebaseApp firebaseApp = FirebaseApp.initializeApp(targetContext, OPTIONS, "myApp");
-    IdTokenListenersCountChangedListener listenersCountChangedListener =
-        mock(IdTokenListenersCountChangedListener.class);
-
-    // When registering, should fire
-    firebaseApp.setIdTokenListenersCountChangedListener(listenersCountChangedListener);
-    verify(listenersCountChangedListener).onListenerCountChanged(0);
-
-    IdTokenListener listener =
-        tokenResult -> {
-          // do nothing
-        };
-
-    // On number changed, should fire
-    firebaseApp.addIdTokenListener(listener);
-    verify(listenersCountChangedListener).onListenerCountChanged(1);
-
-    // On removal, should fire
-    firebaseApp.removeIdTokenListener(listener);
-    verify(listenersCountChangedListener, times(2)).onListenerCountChanged(0);
   }
 
   @Test
@@ -276,7 +253,6 @@ public class FirebaseAppTest {
     // delete and hidden methods shouldn't throw even after delete.
     Collection<String> allowedToCallAfterDelete =
         Arrays.asList(
-            "addIdTokenChangeListener",
             "addBackgroundStateChangeListener",
             "delete",
             "equals",
@@ -284,9 +260,6 @@ public class FirebaseAppTest {
             "getPersistenceKey",
             "hashCode",
             "isDefaultApp",
-            "setIdTokenListenersCountChangedListener",
-            "notifyIdTokenListeners",
-            "removeIdTokenChangeListener",
             "removeBackgroundStateChangeListener",
             "setTokenProvider",
             "toString");
@@ -378,25 +351,25 @@ public class FirebaseAppTest {
 
     Context appContext = mockContext.getApplicationContext();
 
-    assertThat(firebaseApp.get(Context.class)).isSameAs(appContext);
-    assertThat(firebaseApp.get(FirebaseApp.class)).isSameAs(firebaseApp);
+    assertThat(firebaseApp.get(Context.class)).isSameInstanceAs(appContext);
+    assertThat(firebaseApp.get(FirebaseApp.class)).isSameInstanceAs(firebaseApp);
 
     TestComponentOne one = firebaseApp.get(TestComponentOne.class);
     assertThat(one).isNotNull();
-    assertThat(one.getContext()).isSameAs(appContext);
+    assertThat(one.getContext()).isSameInstanceAs(appContext);
 
     TestComponentTwo two = firebaseApp.get(TestComponentTwo.class);
     assertThat(two).isNotNull();
-    assertThat(two.getApp()).isSameAs(firebaseApp);
-    assertThat(two.getOptions()).isSameAs(firebaseApp.getOptions());
-    assertThat(two.getOne()).isSameAs(one);
+    assertThat(two.getApp()).isSameInstanceAs(firebaseApp);
+    assertThat(two.getOptions()).isSameInstanceAs(firebaseApp.getOptions());
+    assertThat(two.getOne()).isSameInstanceAs(one);
   }
 
   @Test
   public void testDirectBoot_shouldInitializeEagerComponentsOnDeviceUnlock() {
     Context mockContext = createForwardingMockContext();
 
-    isDeviceProtectedStorage.set(true);
+    isUserUnlocked.set(false);
     FirebaseApp firebaseApp = FirebaseApp.initializeApp(mockContext);
 
     InitTracker tracker = firebaseApp.get(InitTracker.class);
@@ -409,7 +382,7 @@ public class FirebaseAppTest {
     assertThat(sdkVerifier.isAnalyticsInitialized()).isFalse();
 
     // User unlocks the device.
-    isDeviceProtectedStorage.set(false);
+    isUserUnlocked.set(true);
     Intent userUnlockBroadcast = new Intent(Intent.ACTION_USER_UNLOCKED);
     localBroadcastManager.sendBroadcastSync(userUnlockBroadcast);
 
@@ -420,45 +393,47 @@ public class FirebaseAppTest {
     assertThat(sdkVerifier.isAnalyticsInitialized()).isTrue();
   }
 
-  public static class DefaultIdTokenListener implements IdTokenListener {
-    private Map<IdTokenListener, Integer> calls;
-
-    public DefaultIdTokenListener(Map<IdTokenListener, Integer> calls) {
-      this.calls = calls;
-    }
-
-    @Override
-    public void onIdTokenChanged(@NonNull InternalTokenResult tokenResult) {
-      if (!calls.containsKey(this)) {
-        calls.put(this, 0);
-      }
-      calls.put(this, calls.get(this) + 1);
-    }
-  };
-
   @Test
-  public void testIdTokenListener() {
+  public void testDirectBoot_shouldPreserveDataCollectionAfterUnlock() {
     Context mockContext = createForwardingMockContext();
+
+    isUserUnlocked.set(false);
     FirebaseApp firebaseApp = FirebaseApp.initializeApp(mockContext);
-    Map<IdTokenListener, Integer> calls = new HashMap<>();
-    IdTokenListener listener1 = new DefaultIdTokenListener(calls);
-    IdTokenListener listener2 = new DefaultIdTokenListener(calls);
-    firebaseApp.addIdTokenListener(listener1);
-    firebaseApp.addIdTokenListener(listener2);
-    firebaseApp.notifyIdTokenListeners(null);
-    firebaseApp.removeIdTokenListener(listener2);
-    firebaseApp.notifyIdTokenListeners(null);
-    assertThat(calls.get(listener2)).isEqualTo(1);
-    assertThat(calls.get(listener1)).isEqualTo(2);
+    assert (firebaseApp != null);
+    firebaseApp.setDataCollectionDefaultEnabled(false);
+    assertFalse(firebaseApp.isDataCollectionDefaultEnabled());
+    // User unlocks the device.
+    isUserUnlocked.set(true);
+    Intent userUnlockBroadcast = new Intent(Intent.ACTION_USER_UNLOCKED);
+    localBroadcastManager.sendBroadcastSync(userUnlockBroadcast);
+
+    assertFalse(firebaseApp.isDataCollectionDefaultEnabled());
+    firebaseApp.setDataCollectionDefaultEnabled(true);
+    assertTrue(firebaseApp.isDataCollectionDefaultEnabled());
+    firebaseApp.setDataCollectionDefaultEnabled(false);
+    assertFalse(firebaseApp.isDataCollectionDefaultEnabled());
+    // Because default is true.
+    firebaseApp.setDataCollectionDefaultEnabled(null);
+    assertTrue(firebaseApp.isDataCollectionDefaultEnabled());
   }
 
   /** Returns mock context that forwards calls to targetContext and localBroadcastManager. */
   private Context createForwardingMockContext() {
+    final UserManager spyUserManager = spy(targetContext.getSystemService(UserManager.class));
+    when(spyUserManager.isUserUnlocked())
+        .thenAnswer((Answer<Boolean>) invocation -> isUserUnlocked.get());
     final ContextWrapper applicationContextWrapper =
         new ContextWrapper(targetContext) {
           @Override
-          public boolean isDeviceProtectedStorage() {
-            return isDeviceProtectedStorage.get();
+          public Object getSystemService(String name) {
+            Object original = super.getSystemService(name);
+            if (original == null) {
+              return null;
+            }
+            if (original instanceof UserManager) {
+              return spyUserManager;
+            }
+            return original;
           }
 
           @Override

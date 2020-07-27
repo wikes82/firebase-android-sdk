@@ -14,11 +14,11 @@
 
 package com.google.firebase.database.core.persistence;
 
-import static junit.framework.Assert.assertEquals;
-import static junit.framework.Assert.assertTrue;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 import com.google.firebase.database.DatabaseError;
-import com.google.firebase.database.TestHelpers;
+import com.google.firebase.database.UnitTestHelpers;
 import com.google.firebase.database.annotations.NotNull;
 import com.google.firebase.database.connection.ListenHashProvider;
 import com.google.firebase.database.core.CompoundWrite;
@@ -213,7 +213,7 @@ public class RandomPersistenceTest {
       currentWriteId = 0;
       currentUnackedWriteId = 0;
 
-      DatabaseConfig cfg = TestHelpers.newFrozenTestConfig();
+      DatabaseConfig cfg = UnitTestHelpers.newFrozenTestConfig();
       MockPersistenceStorageEngine storageEngine = new MockPersistenceStorageEngine();
       DefaultPersistenceManager manager =
           new DefaultPersistenceManager(cfg, storageEngine, CachePolicy.NONE);

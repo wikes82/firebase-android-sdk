@@ -23,12 +23,11 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.net.ConnectivityManager;
 import android.net.Network;
-import android.net.NetworkInfo;
 import android.os.Build;
+import androidx.annotation.Nullable;
 import com.google.firebase.firestore.util.Consumer;
 import java.util.ArrayList;
 import java.util.List;
-import javax.annotation.Nullable;
 
 /**
  * Android implementation of ConnectivityMonitor. Parallel implementations exist for N+ and pre-N.
@@ -56,7 +55,9 @@ public final class AndroidConnectivityMonitor implements ConnectivityMonitor {
 
   @Override
   public void addCallback(Consumer<NetworkStatus> callback) {
-    callbacks.add(callback);
+    synchronized (callbacks) {
+      callbacks.add(callback);
+    }
   }
 
   @Override
@@ -82,6 +83,7 @@ public final class AndroidConnectivityMonitor implements ConnectivityMonitor {
           };
     } else {
       NetworkReceiver networkReceiver = new NetworkReceiver();
+      @SuppressWarnings("deprecation")
       IntentFilter networkIntentFilter = new IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION);
       context.registerReceiver(networkReceiver, networkIntentFilter);
       unregisterRunnable =
@@ -99,15 +101,19 @@ public final class AndroidConnectivityMonitor implements ConnectivityMonitor {
   private class DefaultNetworkCallback extends ConnectivityManager.NetworkCallback {
     @Override
     public void onAvailable(Network network) {
-      for (Consumer<NetworkStatus> callback : callbacks) {
-        callback.accept(NetworkStatus.REACHABLE);
+      synchronized (callbacks) {
+        for (Consumer<NetworkStatus> callback : callbacks) {
+          callback.accept(NetworkStatus.REACHABLE);
+        }
       }
     }
 
     @Override
     public void onLost(Network network) {
-      for (Consumer<NetworkStatus> callback : callbacks) {
-        callback.accept(NetworkStatus.UNREACHABLE);
+      synchronized (callbacks) {
+        for (Consumer<NetworkStatus> callback : callbacks) {
+          callback.accept(NetworkStatus.UNREACHABLE);
+        }
       }
     }
   }
@@ -117,19 +123,24 @@ public final class AndroidConnectivityMonitor implements ConnectivityMonitor {
     private boolean isConnected = false;
 
     @Override
+    @SuppressWarnings("deprecation")
     public void onReceive(Context context, Intent intent) {
       ConnectivityManager conn =
           (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
-      NetworkInfo networkInfo = conn.getActiveNetworkInfo();
+      android.net.NetworkInfo networkInfo = conn.getActiveNetworkInfo();
       boolean wasConnected = isConnected;
       isConnected = networkInfo != null && networkInfo.isConnected();
       if (isConnected && !wasConnected) {
-        for (Consumer<NetworkStatus> callback : callbacks) {
-          callback.accept(NetworkStatus.REACHABLE);
+        synchronized (callbacks) {
+          for (Consumer<NetworkStatus> callback : callbacks) {
+            callback.accept(NetworkStatus.REACHABLE);
+          }
         }
       } else if (!isConnected && wasConnected) {
-        for (Consumer<NetworkStatus> callback : callbacks) {
-          callback.accept(NetworkStatus.UNREACHABLE);
+        synchronized (callbacks) {
+          for (Consumer<NetworkStatus> callback : callbacks) {
+            callback.accept(NetworkStatus.UNREACHABLE);
+          }
         }
       }
     }

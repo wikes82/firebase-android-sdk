@@ -14,14 +14,13 @@
 
 package com.google.firebase.firestore;
 
-import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.firebase.firestore.util.Assert.fail;
+import static com.google.firebase.firestore.util.Preconditions.checkNotNull;
 
-import android.support.annotation.NonNull;
-import android.support.annotation.Nullable;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import com.google.android.gms.tasks.Task;
 import com.google.android.gms.tasks.Tasks;
-import com.google.firebase.annotations.PublicApi;
 import com.google.firebase.firestore.core.UserData.ParsedSetData;
 import com.google.firebase.firestore.core.UserData.ParsedUpdateData;
 import com.google.firebase.firestore.model.Document;
@@ -35,16 +34,15 @@ import java.util.Map;
 import java.util.concurrent.ExecutionException;
 
 /**
- * A Transaction is passed to a Function to provide the methods to read and write data within the
- * transaction context.
+ * A {@code Transaction} is passed to a Function to provide the methods to read and write data
+ * within the transaction context.
  *
- * <p><b>Subclassing Note</b>: Firestore classes are not meant to be subclassed except for use in
- * test mocks. Subclassing is not supported in production code and new SDK releases may break code
- * that does so.
+ * <p><b>Subclassing Note</b>: Cloud Firestore classes are not meant to be subclassed except for use
+ * in test mocks. Subclassing is not supported in production code and new SDK releases may break
+ * code that does so.
  *
  * @see FirebaseFirestore#runTransaction(Function)
  */
-@PublicApi
 public class Transaction {
   private final com.google.firebase.firestore.core.Transaction transaction;
   private final FirebaseFirestore firestore;
@@ -56,33 +54,31 @@ public class Transaction {
   }
 
   /**
-   * Overwrites the document referred to by the provided DocumentReference. If the document does not
-   * yet exist, it will be created. If a document already exists, it will be overwritten.
+   * Overwrites the document referred to by the provided {@code DocumentReference}. If the document
+   * does not yet exist, it will be created. If a document already exists, it will be overwritten.
    *
-   * @param documentRef The DocumentReference to overwrite.
+   * @param documentRef The {@code DocumentReference} to overwrite.
    * @param data The data to write to the document (e.g. a Map or a POJO containing the desired
    *     document contents).
-   * @return This Transaction instance. Used for chaining method calls.
+   * @return This {@code Transaction} instance. Used for chaining method calls.
    */
   @NonNull
-  @PublicApi
   public Transaction set(@NonNull DocumentReference documentRef, @NonNull Object data) {
     return set(documentRef, data, SetOptions.OVERWRITE);
   }
 
   /**
    * Writes to the document referred to by the provided DocumentReference. If the document does not
-   * yet exist, it will be created. If you pass {@link SetOptions}, the provided data can be merged
+   * yet exist, it will be created. If you pass {@code SetOptions}, the provided data can be merged
    * into an existing document.
    *
-   * @param documentRef The DocumentReference to overwrite.
+   * @param documentRef The {@code DocumentReference} to overwrite.
    * @param data The data to write to the document (e.g. a Map or a POJO containing the desired
    *     document contents).
    * @param options An object to configure the set behavior.
-   * @return This Transaction instance. Used for chaining method calls.
+   * @return This {@code Transaction} instance. Used for chaining method calls.
    */
   @NonNull
-  @PublicApi
   public Transaction set(
       @NonNull DocumentReference documentRef, @NonNull Object data, @NonNull SetOptions options) {
     firestore.validateReference(documentRef);
@@ -90,42 +86,40 @@ public class Transaction {
     checkNotNull(options, "Provided options must not be null.");
     ParsedSetData parsed =
         options.isMerge()
-            ? firestore.getDataConverter().parseMergeData(data, options.getFieldMask())
-            : firestore.getDataConverter().parseSetData(data);
+            ? firestore.getUserDataReader().parseMergeData(data, options.getFieldMask())
+            : firestore.getUserDataReader().parseSetData(data);
     transaction.set(documentRef.getKey(), parsed);
     return this;
   }
 
   /**
-   * Updates fields in the document referred to by the provided DocumentReference. If no document
-   * exists yet, the update will fail.
+   * Updates fields in the document referred to by the provided {@code DocumentReference}. If no
+   * document exists yet, the update will fail.
    *
-   * @param documentRef The DocumentReference to update.
+   * @param documentRef The {@code DocumentReference} to update.
    * @param data A map of field / value pairs to update. Fields can contain dots to reference nested
    *     fields within the document.
-   * @return This Transaction instance. Used for chaining method calls.
+   * @return This {@code Transaction} instance. Used for chaining method calls.
    */
   @NonNull
-  @PublicApi
   public Transaction update(
       @NonNull DocumentReference documentRef, @NonNull Map<String, Object> data) {
-    ParsedUpdateData parsedData = firestore.getDataConverter().parseUpdateData(data);
+    ParsedUpdateData parsedData = firestore.getUserDataReader().parseUpdateData(data);
     return update(documentRef, parsedData);
   }
 
   /**
-   * Updates fields in the document referred to by the provided DocumentReference. If no document
-   * exists yet, the update will fail.
+   * Updates fields in the document referred to by the provided {@code DocumentReference}. If no
+   * document exists yet, the update will fail.
    *
-   * @param documentRef The DocumentReference to update.
+   * @param documentRef The {@code DocumentReference} to update.
    * @param field The first field to update. Fields can contain dots to reference a nested field
    *     within the document.
    * @param value The first value
    * @param moreFieldsAndValues Additional field/value pairs.
-   * @return This Transaction instance. Used for chaining method calls.
+   * @return This {@code Transaction} instance. Used for chaining method calls.
    */
   @NonNull
-  @PublicApi
   public Transaction update(
       @NonNull DocumentReference documentRef,
       @NonNull String field,
@@ -133,7 +127,7 @@ public class Transaction {
       Object... moreFieldsAndValues) {
     ParsedUpdateData parsedData =
         firestore
-            .getDataConverter()
+            .getUserDataReader()
             .parseUpdateData(
                 Util.collectUpdateArguments(
                     /* fieldPathOffset= */ 1, field, value, moreFieldsAndValues));
@@ -141,17 +135,16 @@ public class Transaction {
   }
 
   /**
-   * Updates fields in the document referred to by the provided DocumentReference. If no document
-   * exists yet, the update will fail.
+   * Updates fields in the document referred to by the provided {@code DocumentReference}. If no
+   * document exists yet, the update will fail.
    *
-   * @param documentRef The DocumentReference to update.
+   * @param documentRef The {@code DocumentReference} to update.
    * @param fieldPath The first field to update.
    * @param value The first value
    * @param moreFieldsAndValues Additional field/value pairs.
-   * @return This Transaction instance. Used for chaining method calls.
+   * @return This {@code Transaction} instance. Used for chaining method calls.
    */
   @NonNull
-  @PublicApi
   public Transaction update(
       @NonNull DocumentReference documentRef,
       @NonNull FieldPath fieldPath,
@@ -159,7 +152,7 @@ public class Transaction {
       Object... moreFieldsAndValues) {
     ParsedUpdateData parsedData =
         firestore
-            .getDataConverter()
+            .getUserDataReader()
             .parseUpdateData(
                 Util.collectUpdateArguments(
                     /* fieldPathOffset= */ 1, fieldPath, value, moreFieldsAndValues));
@@ -174,13 +167,12 @@ public class Transaction {
   }
 
   /**
-   * Deletes the document referred to by the provided DocumentReference.
+   * Deletes the document referred to by the provided {@code DocumentReference}.
    *
-   * @param documentRef The DocumentReference to delete.
-   * @return This Transaction instance. Used for chaining method calls.
+   * @param documentRef The {@code DocumentReference} to delete.
+   * @return This {@code Transaction} instance. Used for chaining method calls.
    */
   @NonNull
-  @PublicApi
   public Transaction delete(@NonNull DocumentReference documentRef) {
     firestore.validateReference(documentRef);
     transaction.delete(documentRef.getKey());
@@ -188,11 +180,11 @@ public class Transaction {
   }
 
   /**
-   * Reads the document referenced by the provided DocumentReference
+   * Reads the document referenced by the provided {@code DocumentReference}
    *
-   * @param documentRef The DocumentReference to read.
-   * @return A Task that will be resolved with the contents of the Document at this
-   *     DocumentReference.
+   * @param documentRef The {@code DocumentReference} to read.
+   * @return A Task that will be resolved with the contents of the Document at this {@code
+   *     DocumentReference}.
    */
   private Task<DocumentSnapshot> getAsync(DocumentReference documentRef) {
     return transaction
@@ -223,13 +215,12 @@ public class Transaction {
   }
 
   /**
-   * Reads the document referenced by this DocumentReference
+   * Reads the document referenced by this {@code DocumentReference}
    *
-   * @param documentRef The DocumentReference to read.
-   * @return The contents of the Document at this DocumentReference.
+   * @param documentRef The {@code DocumentReference} to read.
+   * @return The contents of the Document at this {@code DocumentReference}.
    */
   @NonNull
-  @PublicApi
   public DocumentSnapshot get(@NonNull DocumentReference documentRef)
       throws FirebaseFirestoreException {
     firestore.validateReference(documentRef);
@@ -250,10 +241,8 @@ public class Transaction {
    *
    * @see FirebaseFirestore#runTransaction(Function)
    */
-  @PublicApi
   public interface Function<TResult> {
     @Nullable
-    @PublicApi
     TResult apply(@NonNull Transaction transaction) throws FirebaseFirestoreException;
   }
 }

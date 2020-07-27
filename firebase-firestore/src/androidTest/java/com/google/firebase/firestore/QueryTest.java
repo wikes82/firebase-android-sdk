@@ -18,16 +18,18 @@ import static com.google.firebase.firestore.testutil.IntegrationTestUtil.querySn
 import static com.google.firebase.firestore.testutil.IntegrationTestUtil.querySnapshotToValues;
 import static com.google.firebase.firestore.testutil.IntegrationTestUtil.testCollection;
 import static com.google.firebase.firestore.testutil.IntegrationTestUtil.testCollectionWithDocs;
+import static com.google.firebase.firestore.testutil.IntegrationTestUtil.testFirestore;
 import static com.google.firebase.firestore.testutil.IntegrationTestUtil.waitFor;
+import static com.google.firebase.firestore.testutil.TestUtil.expectError;
 import static com.google.firebase.firestore.testutil.TestUtil.map;
 import static java.util.Arrays.asList;
 import static java.util.Collections.singletonList;
-import static junit.framework.Assert.assertEquals;
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
-import android.support.test.runner.AndroidJUnit4;
+import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.google.android.gms.tasks.Task;
 import com.google.firebase.firestore.Query.Direction;
 import com.google.firebase.firestore.testutil.EventAccumulator;
@@ -77,6 +79,78 @@ public class QueryTest {
     QuerySnapshot set = waitFor(query.get());
     List<Map<String, Object>> data = querySnapshotToValues(set);
     assertEquals(asList(map("k", "d", "sort", 2L), map("k", "c", "sort", 1L)), data);
+  }
+
+  @Test
+  public void testLimitToLastMustAlsoHaveExplicitOrderBy() {
+    CollectionReference collection = testCollectionWithDocs(map());
+
+    Query query = collection.limitToLast(2);
+    expectError(
+        () -> waitFor(query.get()),
+        "limitToLast() queries require specifying at least one orderBy() clause");
+  }
+
+  // Two queries that mapped to the same target ID are referred to as
+  // "mirror queries". An example for a mirror query is a limitToLast()
+  // query and a limit() query that share the same backend Target ID.
+  // Since limitToLast() queries are sent to the backend with a modified
+  // orderBy() clause, they can map to the same target representation as
+  // limit() query, even if both queries appear separate to the user.
+  @Test
+  public void testListenUnlistenRelistenSequenceOfMirrorQueries() {
+    CollectionReference collection =
+        testCollectionWithDocs(
+            map(
+                "a", map("k", "a", "sort", 0),
+                "b", map("k", "b", "sort", 1),
+                "c", map("k", "c", "sort", 1),
+                "d", map("k", "d", "sort", 2)));
+
+    // Setup `limit` query.
+    Query limit = collection.limit(2).orderBy("sort", Direction.ASCENDING);
+    EventAccumulator<QuerySnapshot> limitAccumulator = new EventAccumulator<>();
+    ListenerRegistration limitRegistration = limit.addSnapshotListener(limitAccumulator.listener());
+
+    // Setup mirroring `limitToLast` query.
+    Query limitToLast = collection.limitToLast(2).orderBy("sort", Direction.DESCENDING);
+    EventAccumulator<QuerySnapshot> limitToLastAccumulator = new EventAccumulator<>();
+    ListenerRegistration limitToLastRegistration =
+        limitToLast.addSnapshotListener(limitToLastAccumulator.listener());
+
+    // Verify both query get expected result.
+    List<Map<String, Object>> data = querySnapshotToValues(limitAccumulator.await());
+    assertEquals(asList(map("k", "a", "sort", 0L), map("k", "b", "sort", 1L)), data);
+    data = querySnapshotToValues(limitToLastAccumulator.await());
+    assertEquals(asList(map("k", "b", "sort", 1L), map("k", "a", "sort", 0L)), data);
+
+    // Unlisten then re-listen limit query.
+    limitRegistration.remove();
+    limit.addSnapshotListener(limitAccumulator.listener());
+
+    // Verify `limit` query still works.
+    data = querySnapshotToValues(limitAccumulator.await());
+    assertEquals(asList(map("k", "a", "sort", 0L), map("k", "b", "sort", 1L)), data);
+
+    // Add a document that would change the result set.
+    waitFor(collection.add(map("k", "e", "sort", -1)));
+
+    // Verify both query get expected result.
+    data = querySnapshotToValues(limitAccumulator.await());
+    assertEquals(asList(map("k", "e", "sort", -1L), map("k", "a", "sort", 0L)), data);
+    data = querySnapshotToValues(limitToLastAccumulator.await());
+    assertEquals(asList(map("k", "a", "sort", 0L), map("k", "e", "sort", -1L)), data);
+
+    // Unlisten to limitToLast, update a doc, then relisten to limitToLast
+    limitToLastRegistration.remove();
+    waitFor(collection.document("a").update(map("k", "a", "sort", -2)));
+    limitToLast.addSnapshotListener(limitToLastAccumulator.listener());
+
+    // Verify both query get expected result.
+    data = querySnapshotToValues(limitAccumulator.await());
+    assertEquals(asList(map("k", "a", "sort", -2L), map("k", "e", "sort", -1L)), data);
+    data = querySnapshotToValues(limitToLastAccumulator.await());
+    assertEquals(asList(map("k", "e", "sort", -1L), map("k", "a", "sort", -2L)), data);
   }
 
   @Test
@@ -424,5 +498,185 @@ public class QueryTest {
 
     // NOTE: The backend doesn't currently support null, NaN, objects, or arrays, so there isn't
     // much of anything else interesting to test.
+  }
+
+  @Test
+  public void testQueriesCanUseInFilters() {
+    Map<String, Object> docA = map("zip", 98101L);
+    Map<String, Object> docB = map("zip", 91102L);
+    Map<String, Object> docC = map("zip", 98103L);
+    Map<String, Object> docD = map("zip", asList(98101L));
+    Map<String, Object> docE = map("zip", asList("98101", map("zip", 98101L)));
+    Map<String, Object> docF = map("zip", map("code", 500L));
+    Map<String, Object> docG = map("zip", asList(98101L, 98102L));
+    CollectionReference collection =
+        testCollectionWithDocs(
+            map("a", docA, "b", docB, "c", docC, "d", docD, "e", docE, "f", docF, "g", docG));
+
+    // Search for zips matching 98101, 98103, or [98101, 98102].
+    QuerySnapshot snapshot =
+        waitFor(collection.whereIn("zip", asList(98101L, 98103L, asList(98101L, 98102L))).get());
+    assertEquals(asList(docA, docC, docG), querySnapshotToValues(snapshot));
+
+    // With objects.
+    snapshot = waitFor(collection.whereIn("zip", asList(map("code", 500L))).get());
+    assertEquals(asList(docF), querySnapshotToValues(snapshot));
+  }
+
+  @Test
+  public void testQueriesCanUseInFiltersWithDocIds() {
+    Map<String, String> docA = map("key", "aa");
+    Map<String, String> docB = map("key", "ab");
+    Map<String, String> docC = map("key", "ba");
+    Map<String, String> docD = map("key", "bb");
+    Map<String, Map<String, Object>> testDocs =
+        map(
+            "aa", docA,
+            "ab", docB,
+            "ba", docC,
+            "bb", docD);
+    CollectionReference collection = testCollectionWithDocs(testDocs);
+    QuerySnapshot docs =
+        waitFor(collection.whereIn(FieldPath.documentId(), asList("aa", "ab")).get());
+    assertEquals(asList(docA, docB), querySnapshotToValues(docs));
+  }
+
+  @Test
+  public void testQueriesCanUseArrayContainsAnyFilters() {
+    Map<String, Object> docA = map("array", asList(42L));
+    Map<String, Object> docB = map("array", asList("a", 42L, "c"));
+    Map<String, Object> docC = map("array", asList(41.999, "42", map("a", asList(42))));
+    Map<String, Object> docD = map("array", asList(42L), "array2", asList("bingo"));
+    Map<String, Object> docE = map("array", asList(43L));
+    Map<String, Object> docF = map("array", asList(map("a", 42L)));
+    Map<String, Object> docG = map("array", 42L);
+
+    CollectionReference collection =
+        testCollectionWithDocs(
+            map("a", docA, "b", docB, "c", docC, "d", docD, "e", docE, "f", docF, "g", docG));
+
+    // Search for "array" to contain [42, 43].
+    QuerySnapshot snapshot =
+        waitFor(collection.whereArrayContainsAny("array", asList(42L, 43L)).get());
+    assertEquals(asList(docA, docB, docD, docE), querySnapshotToValues(snapshot));
+
+    // With objects.
+    snapshot = waitFor(collection.whereArrayContainsAny("array", asList(map("a", 42L))).get());
+    assertEquals(asList(docF), querySnapshotToValues(snapshot));
+  }
+
+  @Test
+  public void testCollectionGroupQueries() {
+    FirebaseFirestore db = testFirestore();
+    // Use .document() to get a random collection group name to use but ensure it starts with 'b'
+    // for predictable ordering.
+    String collectionGroup = "b" + db.collection("foo").document().getId();
+
+    String[] docPaths =
+        new String[] {
+          "abc/123/${collectionGroup}/cg-doc1",
+          "abc/123/${collectionGroup}/cg-doc2",
+          "${collectionGroup}/cg-doc3",
+          "${collectionGroup}/cg-doc4",
+          "def/456/${collectionGroup}/cg-doc5",
+          "${collectionGroup}/virtual-doc/nested-coll/not-cg-doc",
+          "x${collectionGroup}/not-cg-doc",
+          "${collectionGroup}x/not-cg-doc",
+          "abc/123/${collectionGroup}x/not-cg-doc",
+          "abc/123/x${collectionGroup}/not-cg-doc",
+          "abc/${collectionGroup}"
+        };
+    WriteBatch batch = db.batch();
+    for (String path : docPaths) {
+      batch.set(db.document(path.replace("${collectionGroup}", collectionGroup)), map("x", 1));
+    }
+    waitFor(batch.commit());
+
+    QuerySnapshot querySnapshot = waitFor(db.collectionGroup(collectionGroup).get());
+    assertEquals(
+        asList("cg-doc1", "cg-doc2", "cg-doc3", "cg-doc4", "cg-doc5"),
+        querySnapshotToIds(querySnapshot));
+  }
+
+  @Test
+  public void testCollectionGroupQueriesWithStartAtEndAtWithArbitraryDocumentIds() {
+    FirebaseFirestore db = testFirestore();
+    // Use .document() to get a random collection group name to use but ensure it starts with 'b'
+    // for predictable ordering.
+    String collectionGroup = "b" + db.collection("foo").document().getId();
+
+    String[] docPaths =
+        new String[] {
+          "a/a/${collectionGroup}/cg-doc1",
+          "a/b/a/b/${collectionGroup}/cg-doc2",
+          "a/b/${collectionGroup}/cg-doc3",
+          "a/b/c/d/${collectionGroup}/cg-doc4",
+          "a/c/${collectionGroup}/cg-doc5",
+          "${collectionGroup}/cg-doc6",
+          "a/b/nope/nope"
+        };
+    WriteBatch batch = db.batch();
+    for (String path : docPaths) {
+      batch.set(db.document(path.replace("${collectionGroup}", collectionGroup)), map("x", 1));
+    }
+    waitFor(batch.commit());
+
+    QuerySnapshot querySnapshot =
+        waitFor(
+            db.collectionGroup(collectionGroup)
+                .orderBy(FieldPath.documentId())
+                .startAt("a/b")
+                .endAt("a/b0")
+                .get());
+    assertEquals(asList("cg-doc2", "cg-doc3", "cg-doc4"), querySnapshotToIds(querySnapshot));
+
+    querySnapshot =
+        waitFor(
+            db.collectionGroup(collectionGroup)
+                .orderBy(FieldPath.documentId())
+                .startAfter("a/b")
+                .endBefore("a/b/" + collectionGroup + "/cg-doc3")
+                .get());
+    assertEquals(asList("cg-doc2"), querySnapshotToIds(querySnapshot));
+  }
+
+  @Test
+  public void testCollectionGroupQueriesWithWhereFiltersOnArbitraryDocumentIds() {
+    FirebaseFirestore db = testFirestore();
+    // Use .document() to get a random collection group name to use but ensure it starts with 'b'
+    // for predictable ordering.
+    String collectionGroup = "b" + db.collection("foo").document().getId();
+
+    String[] docPaths =
+        new String[] {
+          "a/a/${collectionGroup}/cg-doc1",
+          "a/b/a/b/${collectionGroup}/cg-doc2",
+          "a/b/${collectionGroup}/cg-doc3",
+          "a/b/c/d/${collectionGroup}/cg-doc4",
+          "a/c/${collectionGroup}/cg-doc5",
+          "${collectionGroup}/cg-doc6",
+          "a/b/nope/nope"
+        };
+    WriteBatch batch = db.batch();
+    for (String path : docPaths) {
+      batch.set(db.document(path.replace("${collectionGroup}", collectionGroup)), map("x", 1));
+    }
+    waitFor(batch.commit());
+
+    QuerySnapshot querySnapshot =
+        waitFor(
+            db.collectionGroup(collectionGroup)
+                .whereGreaterThanOrEqualTo(FieldPath.documentId(), "a/b")
+                .whereLessThanOrEqualTo(FieldPath.documentId(), "a/b0")
+                .get());
+    assertEquals(asList("cg-doc2", "cg-doc3", "cg-doc4"), querySnapshotToIds(querySnapshot));
+
+    querySnapshot =
+        waitFor(
+            db.collectionGroup(collectionGroup)
+                .whereGreaterThan(FieldPath.documentId(), "a/b")
+                .whereLessThan(FieldPath.documentId(), "a/b/" + collectionGroup + "/cg-doc3")
+                .get());
+    assertEquals(asList("cg-doc2"), querySnapshotToIds(querySnapshot));
   }
 }

@@ -14,18 +14,18 @@
 
 package com.google.firebase.firestore.remote;
 
+import static com.google.firebase.firestore.remote.Datastore.SSL_DEPENDENCY_ERROR_MESSAGE;
 import static com.google.firebase.firestore.util.Assert.hardAssert;
 
-import android.support.annotation.Nullable;
-import android.support.annotation.VisibleForTesting;
+import androidx.annotation.Nullable;
+import androidx.annotation.VisibleForTesting;
 import com.google.firebase.firestore.remote.Stream.StreamCallback;
 import com.google.firebase.firestore.util.AsyncQueue;
 import com.google.firebase.firestore.util.AsyncQueue.DelayedTask;
 import com.google.firebase.firestore.util.AsyncQueue.TimerId;
 import com.google.firebase.firestore.util.ExponentialBackoff;
-import com.google.firebase.firestore.util.FirestoreChannel;
-import com.google.firebase.firestore.util.IncomingStreamObserver;
 import com.google.firebase.firestore.util.Logger;
+import com.google.firebase.firestore.util.Util;
 import io.grpc.ClientCall;
 import io.grpc.Metadata;
 import io.grpc.MethodDescriptor;
@@ -121,13 +121,15 @@ abstract class AbstractStream<ReqT, RespT, CallbackT extends StreamCallback>
     }
 
     @Override
-    public void onReady() {
+    public void onOpen() {
       dispatcher.run(
-          () ->
-              Logger.debug(
-                  AbstractStream.this.getClass().getSimpleName(),
-                  "(%x) Stream is ready",
-                  System.identityHashCode(AbstractStream.this)));
+          () -> {
+            Logger.debug(
+                AbstractStream.this.getClass().getSimpleName(),
+                "(%x) Stream is open",
+                System.identityHashCode(AbstractStream.this));
+            AbstractStream.this.onOpen();
+          });
     }
 
     @Override
@@ -140,7 +142,7 @@ abstract class AbstractStream<ReqT, RespT, CallbackT extends StreamCallback>
                   "(%x) Stream closed.",
                   System.identityHashCode(AbstractStream.this));
             } else {
-              Logger.debug(
+              Logger.warn(
                   AbstractStream.this.getClass().getSimpleName(),
                   "(%x) Stream closed with status: %s.",
                   System.identityHashCode(AbstractStream.this),
@@ -171,6 +173,12 @@ abstract class AbstractStream<ReqT, RespT, CallbackT extends StreamCallback>
 
   /** The time a stream stays open after it is marked idle. */
   private static final long IDLE_TIMEOUT_MS = TimeUnit.MINUTES.toMillis(1);
+
+  /**
+   * Maximum backoff time for reconnecting when we know the connection is failed on the client-side.
+   */
+  private static final long BACKOFF_CLIENT_NETWORK_FAILURE_MAX_DELAY_MS =
+      TimeUnit.SECONDS.toMillis(10);
 
   @Nullable private DelayedTask idleTimer;
 
@@ -244,17 +252,7 @@ abstract class AbstractStream<ReqT, RespT, CallbackT extends StreamCallback>
     StreamObserver streamObserver = new StreamObserver(closeGuardedRunner);
     call = firestoreChannel.runBidiStreamingRpc(methodDescriptor, streamObserver);
 
-    // Note that Starting is only used as intermediate state until onOpen is called asynchronously,
-    // since auth handled transparently by gRPC
     state = State.Starting;
-
-    workerQueue.enqueueAndForget(
-        () ->
-            closeGuardedRunner.run(
-                () -> {
-                  state = State.Open;
-                  this.listener.onOpen();
-                }));
   }
 
   /**
@@ -279,6 +277,13 @@ abstract class AbstractStream<ReqT, RespT, CallbackT extends StreamCallback>
         "Can't provide an error when not in an error state.");
     workerQueue.verifyIsCurrentThread();
 
+    if (Datastore.isMissingSslCiphers(status)) {
+      // The Android device is missing required SSL Ciphers. This error is non-recoverable and must
+      // be addressed by the app developer (see https://bit.ly/2XFpdma).
+      Util.crashMainThread(
+          new IllegalStateException(SSL_DEPENDENCY_ERROR_MESSAGE, status.getCause()));
+    }
+
     // Cancel any outstanding timers (they're guaranteed not to execute).
     cancelIdleCheck();
     this.backoff.cancel();
@@ -291,18 +296,23 @@ abstract class AbstractStream<ReqT, RespT, CallbackT extends StreamCallback>
     if (code == Code.OK) {
       // If this is an intentional close ensure we don't delay our next connection attempt.
       backoff.reset();
-
     } else if (code == Code.RESOURCE_EXHAUSTED) {
       Logger.debug(
           getClass().getSimpleName(),
           "(%x) Using maximum backoff delay to prevent overloading the backend.",
           System.identityHashCode(this));
       backoff.resetToMax();
-
     } else if (code == Code.UNAUTHENTICATED) {
       // "unauthenticated" error means the token was rejected. Try force refreshing it in case it
       // just expired.
       firestoreChannel.invalidateToken();
+    } else if (code == Code.UNAVAILABLE) {
+      // This exception is thrown when the gRPC connection fails on the client side, To shorten
+      // reconnect time, we can use a shorter max delay when reconnecting.
+      if (status.getCause() instanceof java.net.UnknownHostException
+          || status.getCause() instanceof java.net.ConnectException) {
+        backoff.setTemporaryMaxDelay(BACKOFF_CLIENT_NETWORK_FAILURE_MAX_DELAY_MS);
+      }
     }
 
     if (finalState != State.Error) {
@@ -386,6 +396,12 @@ abstract class AbstractStream<ReqT, RespT, CallbackT extends StreamCallback>
     // prevent cases where we retry without a backoff accidentally, we set the stream to error
     // in all cases.
     close(State.Error, status);
+  }
+
+  /** Marks the stream as available. */
+  private void onOpen() {
+    state = State.Open;
+    this.listener.onOpen();
   }
 
   public abstract void onNext(RespT change);

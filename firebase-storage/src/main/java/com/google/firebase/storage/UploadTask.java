@@ -18,14 +18,14 @@ import android.content.ContentResolver;
 import android.content.Context;
 import android.net.Uri;
 import android.os.ParcelFileDescriptor;
-import android.support.annotation.NonNull;
-import android.support.annotation.Nullable;
-import android.support.annotation.VisibleForTesting;
 import android.text.TextUtils;
 import android.util.Log;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.annotation.VisibleForTesting;
 import com.google.android.gms.common.api.Status;
 import com.google.android.gms.common.internal.Preconditions;
-import com.google.firebase.annotations.PublicApi;
+import com.google.firebase.auth.internal.InternalAuthProvider;
 import com.google.firebase.storage.internal.AdaptiveStreamBuffer;
 import com.google.firebase.storage.internal.ExponentialBackoffSender;
 import com.google.firebase.storage.internal.Util;
@@ -47,7 +47,6 @@ import org.json.JSONException;
  * allows pause and resume to control the upload operation.
  */
 @SuppressWarnings("unused")
-@PublicApi
 public class UploadTask extends StorageTask<UploadTask.TaskSnapshot> {
   @VisibleForTesting static final int PREFERRED_CHUNK_SIZE = 256 * 1024; // 256 KB
   private static final int MAXIMUM_CHUNK_SIZE = 32 * 1024 * 1024; // 32 MB
@@ -61,6 +60,7 @@ public class UploadTask extends StorageTask<UploadTask.TaskSnapshot> {
   private final AdaptiveStreamBuffer mStreamBuffer;
   // Active, current mutable state.
   private final AtomicLong mBytesUploaded = new AtomicLong(0);
+  @Nullable private final InternalAuthProvider mAuthProvider;
   private int mCurrentChunkSize = PREFERRED_CHUNK_SIZE;
   private ExponentialBackoffSender mSender;
   private boolean mIsStreamOwned;
@@ -74,29 +74,42 @@ public class UploadTask extends StorageTask<UploadTask.TaskSnapshot> {
   UploadTask(StorageReference targetRef, StorageMetadata metadata, byte[] bytes) {
     Preconditions.checkNotNull(targetRef);
     Preconditions.checkNotNull(bytes);
+
+    FirebaseStorage storage = targetRef.getStorage();
+
     this.mTotalByteCount = bytes.length;
     this.mStorageRef = targetRef;
     this.mMetadata = metadata;
+    this.mAuthProvider = storage.getAuthProvider();
     this.mUri = null;
     this.mStreamBuffer =
         new AdaptiveStreamBuffer(new ByteArrayInputStream(bytes), PREFERRED_CHUNK_SIZE);
     this.mIsStreamOwned = true;
+
     mSender =
         new ExponentialBackoffSender(
-            mStorageRef.getApp(), mStorageRef.getStorage().getMaxUploadRetryTimeMillis());
+            storage.getApp().getApplicationContext(),
+            storage.getAuthProvider(),
+            storage.getMaxDownloadRetryTimeMillis());
   }
 
   UploadTask(
       StorageReference targetRef, StorageMetadata metadata, Uri file, Uri existingUploadUri) {
     Preconditions.checkNotNull(targetRef);
     Preconditions.checkNotNull(file);
+
+    FirebaseStorage storage = targetRef.getStorage();
+
     this.mStorageRef = targetRef;
     this.mMetadata = metadata;
+    this.mAuthProvider = storage.getAuthProvider();
     this.mUri = file;
     InputStream inputStream = null;
     mSender =
         new ExponentialBackoffSender(
-            mStorageRef.getApp(), mStorageRef.getStorage().getMaxUploadRetryTimeMillis());
+            mStorageRef.getApp().getApplicationContext(),
+            mAuthProvider,
+            storage.getMaxUploadRetryTimeMillis());
     long size = -1;
     try {
       ContentResolver resolver =
@@ -144,15 +157,20 @@ public class UploadTask extends StorageTask<UploadTask.TaskSnapshot> {
     Preconditions.checkNotNull(targetRef);
     Preconditions.checkNotNull(stream);
 
+    FirebaseStorage storage = targetRef.getStorage();
+
     this.mTotalByteCount = -1;
     this.mStorageRef = targetRef;
     this.mMetadata = metadata;
+    this.mAuthProvider = storage.getAuthProvider();
     this.mStreamBuffer = new AdaptiveStreamBuffer(stream, PREFERRED_CHUNK_SIZE);
     this.mIsStreamOwned = false;
     this.mUri = null;
     mSender =
         new ExponentialBackoffSender(
-            mStorageRef.getApp(), mStorageRef.getStorage().getMaxUploadRetryTimeMillis());
+            mStorageRef.getApp().getApplicationContext(),
+            mAuthProvider,
+            mStorageRef.getStorage().getMaxUploadRetryTimeMillis());
   }
 
   /** @return the target of the upload. */
@@ -240,19 +258,12 @@ public class UploadTask extends StorageTask<UploadTask.TaskSnapshot> {
     if (TextUtils.isEmpty(mimeType)) {
       mimeType = APPLICATION_OCTET_STREAM;
     }
-    NetworkRequest startRequest;
-    try {
-      startRequest =
-          new ResumableUploadStartRequest(
-              mStorageRef.getStorageUri(),
-              mStorageRef.getApp(),
-              mMetadata != null ? mMetadata.createJSONObject() : null,
-              mimeType);
-    } catch (JSONException e) {
-      Log.e(TAG, "Unable to create a network request from metadata", e);
-      mException = e;
-      return;
-    }
+    NetworkRequest startRequest =
+        new ResumableUploadStartRequest(
+            mStorageRef.getStorageUri(),
+            mStorageRef.getApp(),
+            mMetadata != null ? mMetadata.createJSONObject() : null,
+            mimeType);
 
     if (!sendWithRetry(startRequest)) {
       return;
@@ -334,7 +345,7 @@ public class UploadTask extends StorageTask<UploadTask.TaskSnapshot> {
   private boolean recoverStatus(boolean withRetry) {
     NetworkRequest queryRequest =
         new ResumableUploadQueryRequest(
-            mStorageRef.getStorageUri(), mStorageRef.getApp(), mUploadUri.toString());
+            mStorageRef.getStorageUri(), mStorageRef.getApp(), mUploadUri);
 
     if (RESUMABLE_FINAL_STATUS.equals(mServerStatus)) {
       return false;
@@ -400,7 +411,7 @@ public class UploadTask extends StorageTask<UploadTask.TaskSnapshot> {
           new ResumableUploadByteRequest(
               mStorageRef.getStorageUri(),
               mStorageRef.getApp(),
-              mUploadUri.toString(),
+              mUploadUri,
               mStreamBuffer.get(),
               mBytesUploaded.get(),
               bytesToUpload,
@@ -448,8 +459,7 @@ public class UploadTask extends StorageTask<UploadTask.TaskSnapshot> {
 
   private boolean send(NetworkRequest request) {
     request.performRequest(
-        Util.getCurrentAuthToken(mStorageRef.getApp()),
-        mStorageRef.getApp().getApplicationContext());
+        Util.getCurrentAuthToken(mAuthProvider), mStorageRef.getApp().getApplicationContext());
     return processResultValid(request);
   }
 
@@ -474,7 +484,7 @@ public class UploadTask extends StorageTask<UploadTask.TaskSnapshot> {
     if (mUploadUri != null) {
       cancelRequest =
           new ResumableUploadCancelRequest(
-              mStorageRef.getStorageUri(), mStorageRef.getApp(), mUploadUri.toString());
+              mStorageRef.getStorageUri(), mStorageRef.getApp(), mUploadUri);
     }
 
     if (cancelRequest != null) {
@@ -485,7 +495,7 @@ public class UploadTask extends StorageTask<UploadTask.TaskSnapshot> {
                 @Override
                 public void run() {
                   finalCancelRequest.performRequest(
-                      Util.getCurrentAuthToken(mStorageRef.getApp()),
+                      Util.getCurrentAuthToken(mAuthProvider),
                       mStorageRef.getApp().getApplicationContext());
                 }
               });
@@ -507,7 +517,6 @@ public class UploadTask extends StorageTask<UploadTask.TaskSnapshot> {
   }
 
   /** Encapsulates state about the running {@link UploadTask} */
-  @PublicApi
   public class TaskSnapshot extends StorageTask<UploadTask.TaskSnapshot>.SnapshotBase {
     private final long mBytesUploaded;
     private final Uri mUploadUri;
@@ -527,13 +536,11 @@ public class UploadTask extends StorageTask<UploadTask.TaskSnapshot> {
     }
 
     /** @return the total bytes uploaded so far. */
-    @PublicApi
     public long getBytesTransferred() {
       return mBytesUploaded;
     }
 
     /** @return The number of bytes to upload. Will return -1 if uploading from a stream. */
-    @PublicApi
     public long getTotalByteCount() {
       return UploadTask.this.getTotalByteCount();
     }
@@ -544,7 +551,6 @@ public class UploadTask extends StorageTask<UploadTask.TaskSnapshot> {
      *     StorageMetadata, Uri)}
      */
     @Nullable
-    @PublicApi
     public Uri getUploadSessionUri() {
       return mUploadUri;
     }
@@ -554,7 +560,6 @@ public class UploadTask extends StorageTask<UploadTask.TaskSnapshot> {
      *     Metadata which will include the upload URL.
      */
     @Nullable
-    @PublicApi
     public StorageMetadata getMetadata() {
       return mMetadata;
     }

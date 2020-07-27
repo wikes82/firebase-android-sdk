@@ -14,10 +14,10 @@
 
 package com.google.firebase.firestore.model;
 
-import com.google.firebase.firestore.model.value.FieldValue;
-import com.google.firebase.firestore.model.value.ObjectValue;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import com.google.firestore.v1.Value;
 import java.util.Comparator;
-import javax.annotation.Nullable;
 
 /**
  * Represents a document in Firestore with a key, version, data and whether the data has local
@@ -36,63 +36,33 @@ public final class Document extends MaybeDocument {
   }
 
   private static final Comparator<Document> KEY_COMPARATOR =
-      new Comparator<Document>() {
-        @Override
-        public int compare(Document left, Document right) {
-          return left.getKey().compareTo(right.getKey());
-        }
-      };
+      (left, right) -> left.getKey().compareTo(right.getKey());
 
   /** A document comparator that returns document by key and key only. */
   public static Comparator<Document> keyComparator() {
     return KEY_COMPARATOR;
   }
 
-  private final ObjectValue data;
-
   private final DocumentState documentState;
-
-  /**
-   * Memoized serialized form of the document for optimization purposes (avoids repeated
-   * serialization). Might be null.
-   */
-  private final com.google.firestore.v1.Document proto;
-
-  public @Nullable com.google.firestore.v1.Document getProto() {
-    return proto;
-  }
-
-  public Document(
-      DocumentKey key, SnapshotVersion version, ObjectValue data, DocumentState documentState) {
-    super(key, version);
-    this.data = data;
-    this.documentState = documentState;
-    this.proto = null;
-  }
+  private ObjectValue objectValue;
 
   public Document(
       DocumentKey key,
       SnapshotVersion version,
-      ObjectValue data,
-      DocumentState documentState,
-      com.google.firestore.v1.Document proto) {
+      ObjectValue objectValue,
+      DocumentState documentState) {
     super(key, version);
-    this.data = data;
     this.documentState = documentState;
-    this.proto = proto;
+    this.objectValue = objectValue;
   }
 
+  @NonNull
   public ObjectValue getData() {
-    return data;
+    return objectValue;
   }
 
-  public @Nullable FieldValue getField(FieldPath path) {
-    return data.get(path);
-  }
-
-  public @Nullable Object getFieldValue(FieldPath path) {
-    FieldValue value = getField(path);
-    return (value == null) ? null : value.value();
+  public @Nullable Value getField(FieldPath path) {
+    return objectValue.get(path);
   }
 
   public boolean hasLocalMutations() {
@@ -113,7 +83,7 @@ public final class Document extends MaybeDocument {
     if (this == o) {
       return true;
     }
-    if (o == null || getClass() != o.getClass()) {
+    if (!(o instanceof Document)) {
       return false;
     }
 
@@ -122,15 +92,15 @@ public final class Document extends MaybeDocument {
     return getVersion().equals(document.getVersion())
         && getKey().equals(document.getKey())
         && documentState.equals(document.documentState)
-        && data.equals(document.data);
+        && objectValue.equals(document.objectValue);
   }
 
   @Override
   public int hashCode() {
     int result = getKey().hashCode();
-    result = 31 * result + data.hashCode();
     result = 31 * result + getVersion().hashCode();
     result = 31 * result + documentState.hashCode();
+    result = 31 * result + objectValue.hashCode();
     return result;
   }
 
@@ -140,7 +110,7 @@ public final class Document extends MaybeDocument {
         + "key="
         + getKey()
         + ", data="
-        + data
+        + getData()
         + ", version="
         + getVersion()
         + ", documentState="

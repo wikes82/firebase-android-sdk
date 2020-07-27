@@ -245,11 +245,13 @@ public class SyncTree {
                 Map<String, Object> serverValues = ServerValues.generateServerValues(serverClock);
                 if (write.isOverwrite()) {
                   Node resolvedNode =
-                      ServerValues.resolveDeferredValueSnapshot(write.getOverwrite(), serverValues);
+                      ServerValues.resolveDeferredValueSnapshot(
+                          write.getOverwrite(), SyncTree.this, write.getPath(), serverValues);
                   persistenceManager.applyUserWriteToServerCache(write.getPath(), resolvedNode);
                 } else {
                   CompoundWrite resolvedMerge =
-                      ServerValues.resolveDeferredValueMerge(write.getMerge(), serverValues);
+                      ServerValues.resolveDeferredValueMerge(
+                          write.getMerge(), SyncTree.this, write.getPath(), serverValues);
                   persistenceManager.applyUserWriteToServerCache(write.getPath(), resolvedMerge);
                 }
               }

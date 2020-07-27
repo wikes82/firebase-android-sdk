@@ -4,13 +4,29 @@ This repository contains a subset of the Firebase Android SDK source. It
 currently includes the following Firebase libraries, and some of their
 dependencies:
 
+  * `firebase-abt`
   * `firebase-common`
+  * `firebase-common-ktx`
+  * `firebase-crashlytics`
+  * `firebase-crashlytics-ktx`
+  * `firebase-crashlytics-ndk`
   * `firebase-database`
-  * `firebase-functions`
+  * `firebase-database-ktx`
+  * `firebase-database-collection`
+  * `firebase-datatransport`
   * `firebase-firestore`
-  * `firebase-storage`
+  * `firebase-firestore-ktx`
+  * `firebase-functions`
+  * `firebase-functions-ktx`
+  * `firebase-inappmessaging`
+  * `firebase-inappmessaging-ktx`
   * `firebase-inappmessaging-display`
-  
+  * `firebase-inappmessaging-display-ktx`
+  * `firebase-remote-config`
+  * `firebase-remote-config-ktx`
+  * `firebase-storage`
+  * `firebase-storage-ktx`
+
 
 Firebase is an app development platform with tools to help you build, grow and
 monetize your app. More information about Firebase can be found at
@@ -47,6 +63,12 @@ Firebase Android libraries exercise all three types of tests recommended by the
 [Android Testing Pyramid](https://developer.android.com/training/testing/fundamentals#testing-pyramid).
 Depending on the requirements of the specific project, some or all of these
 tests may be used to support changes.
+
+> :warning: **Running tests with errorprone**
+>
+> To run with errorprone add `withErrorProne` to the command line, e.g.
+>
+> `./gradlew :<firebase-project>:check withErrorProne`.
 
 ### Unit Testing
 
@@ -89,11 +111,39 @@ If you don't have a suitable testing project already:
   * Download the resulting `google-services.json` file and put it in the root of
     your checkout.
 
-#### Running Integration Tests
+#### Running Integration Tests on Local Emulator
 
 Integration tests can be executed on the command line by running
 ```bash
 ./gradlew :<firebase-project>:connectedCheck
+```
+
+#### Running Integration Tests on Firebase Test Lab
+
+> You need additional setup for this to work:
+>
+> * `gcloud` needs to be [installed](https://cloud.google.com/sdk/install) on local machine
+> * `gcloud` needs to be configured with a project that has billing enabled
+> * `gcloud` needs to be authenticated with credentials that have 'Firebase Test Lab Admin' role
+
+Integration tests can be executed on the command line by running
+```bash
+./gradlew :<firebase-project>:deviceCheck
+```
+
+This will execute tests on devices that are configured per project, if nothing is configured for the
+project, the tests will run on `model=Pixel2,version=27,locale=en,orientation=portrait`.
+
+Projects can be configured in the following way:
+
+```
+firebaseTestLab {
+  // to get a list of available devices execute `gcloud firebase test android models list`
+  devices = [
+    '<device1>',
+    '<device2>',
+  ]
+}
 ```
 
 ## Annotations
@@ -188,11 +238,18 @@ projects may be published as follows.
     publishProjectsToMavenLocal
 ```
 
+**Note:** Firebase Crashlytics NDK requires NDK version r17c to build. Please
+see the [README](firebase-crashlytics-ndk/README.md) for setup instructions.
+Alternatively, if you do not need to build this project, you can safely disable
+it by commenting out its reference in [subprojects.cfg](subprojects.cfg).
+
 ### Code Formatting
 
 Code in this repo is formatted with the google-java-format tool. You can enable
 this formatting in Android Studio by downloading and installing the
-[google-java-format plugin](https://plugins.jetbrains.com/plugin/8527-google-java-format).
+[google-java-format plugin](https://github.com/google/google-java-format).
+The plugin is disabled by default, but the repo contains configuration information
+and links to additional plugins.
 
 To run formatting on your entire project you can run
 ```bash

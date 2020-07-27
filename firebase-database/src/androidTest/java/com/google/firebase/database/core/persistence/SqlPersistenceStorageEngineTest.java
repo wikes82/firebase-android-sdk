@@ -14,21 +14,21 @@
 
 package com.google.firebase.database.core.persistence;
 
-import static com.google.firebase.database.TestHelpers.asSet;
-import static com.google.firebase.database.TestHelpers.childKeySet;
-import static com.google.firebase.database.TestHelpers.compoundWrite;
-import static com.google.firebase.database.TestHelpers.defaultQueryAt;
-import static com.google.firebase.database.TestHelpers.leafNodeOfSize;
-import static com.google.firebase.database.TestHelpers.node;
-import static com.google.firebase.database.TestHelpers.path;
+import static com.google.firebase.database.IntegrationTestHelpers.asSet;
+import static com.google.firebase.database.IntegrationTestHelpers.childKeySet;
+import static com.google.firebase.database.IntegrationTestHelpers.compoundWrite;
+import static com.google.firebase.database.IntegrationTestHelpers.defaultQueryAt;
+import static com.google.firebase.database.IntegrationTestHelpers.leafNodeOfSize;
+import static com.google.firebase.database.IntegrationTestHelpers.node;
+import static com.google.firebase.database.IntegrationTestHelpers.path;
 import static com.google.firebase.database.snapshot.NodeUtilities.NodeFromJSON;
 import static java.util.Arrays.asList;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
-import android.support.test.InstrumentationRegistry;
-import android.support.test.runner.AndroidJUnit4;
+import androidx.test.ext.junit.runners.AndroidJUnit4;
+import androidx.test.platform.app.InstrumentationRegistry;
 import com.google.firebase.database.DatabaseException;
 import com.google.firebase.database.RetryRule;
 import com.google.firebase.database.android.SqlPersistenceStorageEngine;
@@ -69,7 +69,7 @@ public class SqlPersistenceStorageEngineTest {
     ctx.setLogLevel(com.google.firebase.database.Logger.Level.DEBUG);
     final SqlPersistenceStorageEngine engine =
         new SqlPersistenceStorageEngine(
-            InstrumentationRegistry.getTargetContext(), ctx, "test-namespace");
+            InstrumentationRegistry.getInstrumentation().getTargetContext(), ctx, "test-namespace");
     runInTransaction(
         engine,
         new Runnable() {
@@ -410,7 +410,8 @@ public class SqlPersistenceStorageEngineTest {
     cfg.setLogger(new DefaultLogger(Logger.Level.DEBUG, null));
     String id = ".?!@$%^&*()\\/-~{}π∞٩(-̮̮̃-̃)۶ ٩(●̮̮̃•̃)۶ ٩(͡๏̯͡๏)۶";
     PersistenceStorageEngine engine =
-        new SqlPersistenceStorageEngine(InstrumentationRegistry.getTargetContext(), cfg, id);
+        new SqlPersistenceStorageEngine(
+            InstrumentationRegistry.getInstrumentation().getTargetContext(), cfg, id);
   }
 
   @Test

@@ -17,6 +17,7 @@ package com.google.firebase.firestore.local;
 import static com.google.firebase.firestore.testutil.TestUtil.deleteMutation;
 import static com.google.firebase.firestore.testutil.TestUtil.deletedDoc;
 import static com.google.firebase.firestore.testutil.TestUtil.doc;
+import static com.google.firebase.firestore.testutil.TestUtil.field;
 import static com.google.firebase.firestore.testutil.TestUtil.fieldMask;
 import static com.google.firebase.firestore.testutil.TestUtil.key;
 import static com.google.firebase.firestore.testutil.TestUtil.map;
@@ -33,6 +34,7 @@ import com.google.firebase.firestore.model.MaybeDocument;
 import com.google.firebase.firestore.model.NoDocument;
 import com.google.firebase.firestore.model.SnapshotVersion;
 import com.google.firebase.firestore.model.UnknownDocument;
+import com.google.firebase.firestore.model.mutation.FieldMask;
 import com.google.firebase.firestore.model.mutation.Mutation;
 import com.google.firebase.firestore.model.mutation.MutationBatch;
 import com.google.firebase.firestore.model.mutation.PatchMutation;
@@ -43,6 +45,7 @@ import com.google.firestore.v1.Precondition;
 import com.google.firestore.v1.Value;
 import com.google.firestore.v1.Write;
 import com.google.protobuf.ByteString;
+import java.util.Collections;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -65,6 +68,12 @@ public final class LocalSerializerTest {
 
   @Test
   public void testEncodesMutationBatch() {
+    Mutation baseWrite =
+        new PatchMutation(
+            key("foo/bar"),
+            TestUtil.wrapObject(map("a", "b")),
+            FieldMask.fromSet(Collections.singleton(field("a"))),
+            com.google.firebase.firestore.model.mutation.Precondition.NONE);
     Mutation set = setMutation("foo/bar", map("a", "b", "num", 1));
     Mutation patch =
         new PatchMutation(
@@ -74,7 +83,18 @@ public final class LocalSerializerTest {
             com.google.firebase.firestore.model.mutation.Precondition.exists(true));
     Mutation del = deleteMutation("baz/quux");
     Timestamp writeTime = Timestamp.now();
-    MutationBatch model = new MutationBatch(42, writeTime, asList(set, patch, del));
+    MutationBatch model =
+        new MutationBatch(
+            42, writeTime, Collections.singletonList(baseWrite), asList(set, patch, del));
+
+    Write baseWriteProto =
+        Write.newBuilder()
+            .setUpdate(
+                com.google.firestore.v1.Document.newBuilder()
+                    .setName("projects/p/databases/d/documents/foo/bar")
+                    .putFields("a", Value.newBuilder().setStringValue("b").build()))
+            .setUpdateMask(DocumentMask.newBuilder().addFieldPaths("a"))
+            .build();
 
     Write setProto =
         Write.newBuilder()
@@ -108,6 +128,7 @@ public final class LocalSerializerTest {
     com.google.firebase.firestore.proto.WriteBatch batchProto =
         com.google.firebase.firestore.proto.WriteBatch.newBuilder()
             .setBatchId(42)
+            .addBaseWrites(baseWriteProto)
             .addAllWrites(asList(setProto, patchProto, delProto))
             .setLocalWriteTime(writeTimeProto)
             .build();
@@ -117,6 +138,7 @@ public final class LocalSerializerTest {
     assertEquals(model.getBatchId(), decoded.getBatchId());
     assertEquals(model.getLocalWriteTime(), decoded.getLocalWriteTime());
     assertEquals(model.getMutations(), decoded.getMutations());
+    assertEquals(model.getBaseMutations(), decoded.getBaseMutations());
     assertEquals(model.getKeys(), decoded.getKeys());
   }
 
@@ -177,19 +199,27 @@ public final class LocalSerializerTest {
   }
 
   @Test
-  public void testEncodesQueryData() {
+  public void testEncodesTargetData() {
     Query query = TestUtil.query("room");
     int targetId = 42;
     long sequenceNumber = 10;
-    SnapshotVersion version = TestUtil.version(1039);
+    SnapshotVersion snapshotVersion = TestUtil.version(1039);
+    SnapshotVersion limboFreeVersion = TestUtil.version(1000);
     ByteString resumeToken = TestUtil.resumeToken(1039);
 
-    QueryData queryData =
-        new QueryData(query, targetId, sequenceNumber, QueryPurpose.LISTEN, version, resumeToken);
+    TargetData targetData =
+        new TargetData(
+            query.toTarget(),
+            targetId,
+            sequenceNumber,
+            QueryPurpose.LISTEN,
+            snapshotVersion,
+            limboFreeVersion,
+            resumeToken);
 
     // Let the RPC serializer test various permutations of query serialization.
     com.google.firestore.v1.Target.QueryTarget queryTarget =
-        remoteSerializer.encodeQueryTarget(query);
+        remoteSerializer.encodeQueryTarget(query.toTarget());
 
     com.google.firebase.firestore.proto.Target expected =
         com.google.firebase.firestore.proto.Target.newBuilder()
@@ -201,10 +231,12 @@ public final class LocalSerializerTest {
                 com.google.firestore.v1.Target.QueryTarget.newBuilder()
                     .setParent(queryTarget.getParent())
                     .setStructuredQuery(queryTarget.getStructuredQuery()))
+            .setLastLimboFreeSnapshotVersion(
+                com.google.protobuf.Timestamp.newBuilder().setNanos(1000000))
             .build();
 
-    assertEquals(expected, serializer.encodeQueryData(queryData));
-    QueryData decoded = serializer.decodeQueryData(expected);
-    assertEquals(queryData, decoded);
+    assertEquals(expected, serializer.encodeTargetData(targetData));
+    TargetData decoded = serializer.decodeTargetData(expected);
+    assertEquals(targetData, decoded);
   }
 }

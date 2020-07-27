@@ -14,7 +14,9 @@
 
 package com.google.firebase.firestore.util;
 
-import android.support.annotation.Nullable;
+import android.os.Handler;
+import android.os.Looper;
+import androidx.annotation.Nullable;
 import com.google.android.gms.tasks.Continuation;
 import com.google.cloud.datastore.core.number.NumberComparisonHelper;
 import com.google.firebase.firestore.FieldPath;
@@ -24,6 +26,7 @@ import com.google.protobuf.ByteString;
 import io.grpc.Status;
 import io.grpc.StatusException;
 import io.grpc.StatusRuntimeException;
+import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -37,7 +40,7 @@ public class Util {
   private static final String AUTO_ID_ALPHABET =
       "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
-  private static final Random rand = new Random();
+  private static final Random rand = new SecureRandom();
 
   public static String autoId() {
     StringBuilder builder = new StringBuilder();
@@ -81,11 +84,6 @@ public class Util {
    * available after Android 19.
    */
   public static int compareLongs(long i1, long i2) {
-    return NumberComparisonHelper.compareLongs(i1, i2);
-  }
-
-  /** Utility function to compare ints. See {@link #compareLongs} for rationale. */
-  public static int compareInts(int i1, int i2) {
     return NumberComparisonHelper.compareLongs(i1, i2);
   }
 
@@ -210,5 +208,30 @@ public class Util {
   /** Describes the type of an object, handling null objects gracefully. */
   public static String typeName(@Nullable Object obj) {
     return obj == null ? "null" : obj.getClass().getName();
+  }
+
+  /** Raises an exception on Android's UI Thread and crashes the end user's app. */
+  public static void crashMainThread(RuntimeException exception) {
+    new Handler(Looper.getMainLooper())
+        .post(
+            () -> {
+              throw exception;
+            });
+  }
+
+  public static int compareByteStrings(ByteString left, ByteString right) {
+    int size = Math.min(left.size(), right.size());
+    for (int i = 0; i < size; i++) {
+      // Make sure the bytes are unsigned
+      int thisByte = left.byteAt(i) & 0xff;
+      int otherByte = right.byteAt(i) & 0xff;
+      if (thisByte < otherByte) {
+        return -1;
+      } else if (thisByte > otherByte) {
+        return 1;
+      }
+      // Byte values are equal, continue with comparison
+    }
+    return Util.compareIntegers(left.size(), right.size());
   }
 }

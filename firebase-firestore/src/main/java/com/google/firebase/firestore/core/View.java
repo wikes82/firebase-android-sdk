@@ -17,6 +17,7 @@ package com.google.firebase.firestore.core;
 import static com.google.firebase.firestore.util.Assert.hardAssert;
 import static com.google.firebase.firestore.util.Util.compareIntegers;
 
+import androidx.annotation.Nullable;
 import com.google.firebase.database.collection.ImmutableSortedMap;
 import com.google.firebase.database.collection.ImmutableSortedSet;
 import com.google.firebase.firestore.core.DocumentViewChange.Type;
@@ -30,7 +31,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import javax.annotation.Nullable;
 
 /**
  * View is responsible for computing the final merged truth of what docs are in a query. It gets
@@ -101,6 +101,10 @@ public class View {
     mutatedKeys = DocumentKey.emptyKeySet();
   }
 
+  public SyncState getSyncState() {
+    return this.syncState;
+  }
+
   /**
    * Iterates over a set of doc changes, applies the query limit, and computes what the new results
    * should be, what the changes were, and whether we may need to go back to the local cache for
@@ -144,8 +148,12 @@ public class View {
     // Note that this should never get used in a refill (when previousChanges is set), because there
     // will only be adds -- no deletes or updates.
     Document lastDocInLimit =
-        (query.hasLimit() && oldDocumentSet.size() == query.getLimit())
+        (query.hasLimitToFirst() && oldDocumentSet.size() == query.getLimitToFirst())
             ? oldDocumentSet.getLastDocument()
+            : null;
+    Document firstDocInLimit =
+        (query.hasLimitToLast() && oldDocumentSet.size() == query.getLimitToLast())
+            ? oldDocumentSet.getFirstDocument()
             : null;
 
     for (Map.Entry<DocumentKey, ? extends MaybeDocument> entry : docChanges) {
@@ -190,9 +198,11 @@ public class View {
             changeSet.addChange(DocumentViewChange.create(Type.MODIFIED, newDoc));
             changeApplied = true;
 
-            if (lastDocInLimit != null && query.comparator().compare(newDoc, lastDocInLimit) > 0) {
-              // This doc moved from inside the limit to after the limit. That means there may be
-              // some doc in the local cache that's actually less than this one.
+            if ((lastDocInLimit != null && query.comparator().compare(newDoc, lastDocInLimit) > 0)
+                || (firstDocInLimit != null
+                    && query.comparator().compare(newDoc, firstDocInLimit) < 0)) {
+              // This doc moved from inside the limit to outside the limit. That means there may be
+              // some doc in the local cache that should be included instead.
               needsRefill = true;
             }
           }
@@ -206,7 +216,7 @@ public class View {
       } else if (oldDoc != null && newDoc == null) {
         changeSet.addChange(DocumentViewChange.create(Type.REMOVED, oldDoc));
         changeApplied = true;
-        if (lastDocInLimit != null) {
+        if (lastDocInLimit != null || firstDocInLimit != null) {
           // A doc was removed from a full limit query. We'll need to requery from the local cache
           // to see if we know about some other doc that should be in the results.
           needsRefill = true;
@@ -228,9 +238,14 @@ public class View {
       }
     }
 
-    if (query.hasLimit()) {
-      for (long i = newDocumentSet.size() - this.query.getLimit(); i > 0; --i) {
-        Document oldDoc = newDocumentSet.getLastDocument();
+    // Drop documents out to meet limitToFirst/limitToLast requirement.
+    if (query.hasLimitToFirst() || query.hasLimitToLast()) {
+      long limit = query.hasLimitToFirst() ? query.getLimitToFirst() : query.getLimitToLast();
+      for (long i = newDocumentSet.size() - limit; i > 0; --i) {
+        Document oldDoc =
+            query.hasLimitToFirst()
+                ? newDocumentSet.getLastDocument()
+                : newDocumentSet.getFirstDocument();
         newDocumentSet = newDocumentSet.remove(oldDoc.getKey());
         newMutatedKeys = newMutatedKeys.remove(oldDoc.getKey());
         changeSet.addChange(DocumentViewChange.create(Type.REMOVED, oldDoc));

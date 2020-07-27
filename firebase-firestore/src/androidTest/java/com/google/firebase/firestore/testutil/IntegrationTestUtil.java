@@ -16,15 +16,18 @@ package com.google.firebase.firestore.testutil;
 
 import static com.google.firebase.firestore.testutil.TestUtil.map;
 import static com.google.firebase.firestore.util.Util.autoId;
-import static junit.framework.Assert.assertNull;
-import static junit.framework.Assert.fail;
+import static org.junit.Assert.assertNull;
 
 import android.content.Context;
-import android.support.test.InstrumentationRegistry;
+import android.os.StrictMode;
+import androidx.test.core.app.ApplicationProvider;
 import com.google.android.gms.tasks.Task;
 import com.google.android.gms.tasks.TaskCompletionSource;
 import com.google.android.gms.tasks.Tasks;
+import com.google.firebase.FirebaseApp;
+import com.google.firebase.FirebaseOptions;
 import com.google.firebase.firestore.AccessHelper;
+import com.google.firebase.firestore.BuildConfig;
 import com.google.firebase.firestore.CollectionReference;
 import com.google.firebase.firestore.DocumentReference;
 import com.google.firebase.firestore.DocumentSnapshot;
@@ -34,15 +37,15 @@ import com.google.firebase.firestore.ListenerRegistration;
 import com.google.firebase.firestore.MetadataChanges;
 import com.google.firebase.firestore.QuerySnapshot;
 import com.google.firebase.firestore.auth.EmptyCredentialsProvider;
+import com.google.firebase.firestore.auth.User;
 import com.google.firebase.firestore.core.DatabaseInfo;
 import com.google.firebase.firestore.local.Persistence;
-import com.google.firebase.firestore.local.SQLitePersistence;
 import com.google.firebase.firestore.model.DatabaseId;
 import com.google.firebase.firestore.testutil.provider.FirestoreProvider;
 import com.google.firebase.firestore.util.AsyncQueue;
+import com.google.firebase.firestore.util.Listener;
 import com.google.firebase.firestore.util.Logger;
 import com.google.firebase.firestore.util.Logger.Level;
-import java.io.File;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -53,8 +56,40 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
+class MockCredentialsProvider extends EmptyCredentialsProvider {
+
+  private static MockCredentialsProvider instance;
+  private Listener<User> listener;
+
+  public static MockCredentialsProvider instance() {
+    if (MockCredentialsProvider.instance == null) {
+      MockCredentialsProvider.instance = new MockCredentialsProvider();
+    }
+    return MockCredentialsProvider.instance;
+  }
+
+  private MockCredentialsProvider() {}
+
+  @Override
+  public void setChangeListener(Listener<User> changeListener) {
+    super.setChangeListener(changeListener);
+    this.listener = changeListener;
+  }
+
+  public void changeUserTo(User user) {
+    listener.onValue(user);
+  }
+}
+
 /** A set of helper methods for tests */
 public class IntegrationTestUtil {
+
+  // Whether the integration tests should run against a local Firestore emulator instead of the
+  // Production environment. Note that the Android Emulator treats "10.0.2.2" as its host machine.
+  // TODO(mrschmidt): Support multiple environments (Emulator, QA, Nightly, Production)
+  private static final boolean CONNECT_TO_EMULATOR = BuildConfig.USE_EMULATOR_FOR_TESTS;
+  private static final String EMULATOR_HOST = "10.0.2.2";
+  private static final int EMULATOR_PORT = 8080;
 
   // Alternate project ID for creating "bad" references. Doesn't actually need to work.
   public static final String BAD_PROJECT_ID = "test-project-2";
@@ -73,18 +108,34 @@ public class IntegrationTestUtil {
 
   private static final FirestoreProvider provider = new FirestoreProvider();
 
+  private static boolean strictModeEnabled = false;
   private static boolean backendPrimed = false;
+
+  // FirebaseOptions needed to create a test FirebaseApp.
+  private static final FirebaseOptions OPTIONS =
+      new FirebaseOptions.Builder()
+          .setApplicationId(":123:android:123ab")
+          .setProjectId(provider.projectId())
+          .build();
 
   public static FirestoreProvider provider() {
     return provider;
   }
 
   public static DatabaseInfo testEnvDatabaseInfo() {
-    return new DatabaseInfo(
-        DatabaseId.forProject(provider.projectId()),
-        "test-persistenceKey",
-        provider.firestoreHost(),
-        /*sslEnabled=*/ true);
+    if (CONNECT_TO_EMULATOR) {
+      return new DatabaseInfo(
+          DatabaseId.forProject(provider.projectId()),
+          "test-persistenceKey",
+          String.format("%s:%d", EMULATOR_HOST, EMULATOR_PORT),
+          /*sslEnabled=*/ false);
+    } else {
+      return new DatabaseInfo(
+          DatabaseId.forProject(provider.projectId()),
+          "test-persistenceKey",
+          provider.firestoreHost(),
+          /*sslEnabled=*/ true);
+    }
   }
 
   public static FirebaseFirestoreSettings newTestSettings() {
@@ -94,11 +145,27 @@ public class IntegrationTestUtil {
   @SuppressWarnings("deprecation") // for setTimestampsInSnapshotsEnabled()
   public static FirebaseFirestoreSettings newTestSettingsWithSnapshotTimestampsEnabled(
       boolean enabled) {
-    return new FirebaseFirestoreSettings.Builder()
-        .setHost(provider.firestoreHost())
-        .setPersistenceEnabled(true)
-        .setTimestampsInSnapshotsEnabled(enabled)
-        .build();
+    FirebaseFirestoreSettings.Builder settings = new FirebaseFirestoreSettings.Builder();
+
+    if (CONNECT_TO_EMULATOR) {
+      settings.setHost(String.format("%s:%d", EMULATOR_HOST, EMULATOR_PORT));
+      settings.setSslEnabled(false);
+    } else {
+      settings.setHost(provider.firestoreHost());
+    }
+
+    settings.setPersistenceEnabled(true);
+    settings.setTimestampsInSnapshotsEnabled(enabled);
+
+    return settings.build();
+  }
+
+  public static FirebaseApp testFirebaseApp() {
+    try {
+      return FirebaseApp.getInstance(FirebaseApp.DEFAULT_APP_NAME);
+    } catch (IllegalStateException e) {
+      return FirebaseApp.initializeApp(ApplicationProvider.getApplicationContext(), OPTIONS);
+    }
   }
 
   /** Initializes a new Firestore instance that uses the default project. */
@@ -157,14 +224,25 @@ public class IntegrationTestUtil {
     return testFirestore(BAD_PROJECT_ID, Level.DEBUG, newTestSettings());
   }
 
-  private static void clearPersistence(
-      Context context, DatabaseId databaseId, String persistenceKey) {
-    @SuppressWarnings("VisibleForTests")
-    String databaseName = SQLitePersistence.databaseName(persistenceKey, databaseId);
-    String sqlLitePath = context.getDatabasePath(databaseName).getPath();
-    String journalPath = sqlLitePath + "-journal";
-    new File(sqlLitePath).delete();
-    new File(journalPath).delete();
+  /**
+   * Enable strict mode for integration tests. Currently checks for leaked SQLite or other Closeable
+   * objects.
+   *
+   * <p>If a leak is found, Android will log the leak and kill the test.
+   */
+  private static void ensureStrictMode() {
+    if (strictModeEnabled) {
+      return;
+    }
+
+    strictModeEnabled = true;
+    StrictMode.setVmPolicy(
+        new StrictMode.VmPolicy.Builder()
+            .detectLeakedSqlLiteObjects()
+            .detectLeakedClosableObjects()
+            .penaltyLog()
+            .penaltyDeath()
+            .build());
   }
 
   /**
@@ -173,34 +251,38 @@ public class IntegrationTestUtil {
    */
   public static FirebaseFirestore testFirestore(
       String projectId, Logger.Level logLevel, FirebaseFirestoreSettings settings) {
+    String persistenceKey = "db" + firestoreStatus.size();
+    return testFirestore(projectId, logLevel, settings, persistenceKey);
+  }
+
+  public static FirebaseFirestore testFirestore(
+      String projectId,
+      Logger.Level logLevel,
+      FirebaseFirestoreSettings settings,
+      String persistenceKey) {
     // This unfortunately is a global setting that affects existing Firestore clients.
     Logger.setLogLevel(logLevel);
 
     // TODO: Remove this once this is ready to ship.
     Persistence.INDEXING_SUPPORT_ENABLED = true;
 
-    Context context = InstrumentationRegistry.getContext();
+    Context context = ApplicationProvider.getApplicationContext();
     DatabaseId databaseId = DatabaseId.forDatabase(projectId, DatabaseId.DEFAULT_DATABASE_ID);
-    String persistenceKey = "db" + firestoreStatus.size();
 
-    clearPersistence(context, databaseId, persistenceKey);
+    ensureStrictMode();
 
-    AsyncQueue asyncQueue = null;
-
-    try {
-      asyncQueue = new AsyncQueue();
-    } catch (Exception e) {
-      fail("Failed to initialize AsyncQueue:" + e);
-    }
+    AsyncQueue asyncQueue = new AsyncQueue();
 
     FirebaseFirestore firestore =
         AccessHelper.newFirebaseFirestore(
             context,
             databaseId,
             persistenceKey,
-            new EmptyCredentialsProvider(),
+            MockCredentialsProvider.instance(),
             asyncQueue,
-            /*firebaseApp=*/ null);
+            /*firebaseApp=*/ null,
+            /*instanceRegistry=*/ (dbId) -> {});
+    waitFor(AccessHelper.clearPersistence(firestore));
     firestore.setFirestoreSettings(settings);
     firestoreStatus.put(firestore, true);
 
@@ -210,7 +292,7 @@ public class IntegrationTestUtil {
   public static void tearDown() {
     try {
       for (FirebaseFirestore firestore : firestoreStatus.keySet()) {
-        Task<Void> result = AccessHelper.shutdown(firestore);
+        Task<Void> result = firestore.terminate();
         waitFor(result);
       }
     } finally {
@@ -351,11 +433,23 @@ public class IntegrationTestUtil {
     return firestoreStatus.get(firestore);
   }
 
+  public static void removeFirestore(FirebaseFirestore firestore) {
+    firestoreStatus.remove(firestore);
+  }
+
   public static Map<String, Object> toDataMap(QuerySnapshot qrySnap) {
     Map<String, Object> result = new HashMap<>();
     for (DocumentSnapshot docSnap : qrySnap.getDocuments()) {
       result.put(docSnap.getId(), docSnap.getData());
     }
     return result;
+  }
+
+  public static boolean isRunningAgainstEmulator() {
+    return CONNECT_TO_EMULATOR;
+  }
+
+  public static void testChangeUserTo(User user) {
+    MockCredentialsProvider.instance().changeUserTo(user);
   }
 }

@@ -14,10 +14,11 @@
 
 package com.google.firebase.firestore.local;
 
-import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.firebase.firestore.util.Assert.hardAssert;
+import static com.google.firebase.firestore.util.Preconditions.checkNotNull;
 import static java.util.Collections.emptyList;
 
+import androidx.annotation.Nullable;
 import com.google.firebase.Timestamp;
 import com.google.firebase.database.collection.ImmutableSortedSet;
 import com.google.firebase.firestore.core.Query;
@@ -32,7 +33,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
-import javax.annotation.Nullable;
 
 final class MemoryMutationQueue implements MutationQueue {
 
@@ -127,7 +127,8 @@ final class MemoryMutationQueue implements MutationQueue {
   }
 
   @Override
-  public MutationBatch addMutationBatch(Timestamp localWriteTime, List<Mutation> mutations) {
+  public MutationBatch addMutationBatch(
+      Timestamp localWriteTime, List<Mutation> baseMutations, List<Mutation> mutations) {
     hardAssert(!mutations.isEmpty(), "Mutation batches should not be empty");
 
     int batchId = nextBatchId;
@@ -140,13 +141,17 @@ final class MemoryMutationQueue implements MutationQueue {
           prior.getBatchId() < batchId, "Mutation batchIds must be monotonically increasing order");
     }
 
-    MutationBatch batch = new MutationBatch(batchId, localWriteTime, mutations);
+    MutationBatch batch = new MutationBatch(batchId, localWriteTime, baseMutations, mutations);
     queue.add(batch);
 
-    // Track references by document key.
+    // Track references by document key and index collection parents.
     for (Mutation mutation : mutations) {
       batchesByDocumentKey =
           batchesByDocumentKey.insert(new DocumentReference(mutation.getKey(), batchId));
+
+      persistence
+          .getIndexManager()
+          .addToCollectionParentIndex(mutation.getKey().getPath().popLast());
     }
 
     return batch;
@@ -174,6 +179,11 @@ final class MemoryMutationQueue implements MutationQueue {
     int rawIndex = indexOfBatchId(nextBatchId);
     int index = rawIndex < 0 ? 0 : rawIndex;
     return queue.size() > index ? queue.get(index) : null;
+  }
+
+  @Override
+  public int getHighestUnacknowledgedBatchId() {
+    return queue.isEmpty() ? MutationBatch.UNKNOWN : nextBatchId - 1;
   }
 
   @Override
@@ -224,6 +234,10 @@ final class MemoryMutationQueue implements MutationQueue {
 
   @Override
   public List<MutationBatch> getAllMutationBatchesAffectingQuery(Query query) {
+    hardAssert(
+        !query.isCollectionGroupQuery(),
+        "CollectionGroup queries should be handled in LocalDocumentsView");
+
     // Use the query path as a prefix for testing if a document matches the query.
     ResourcePath prefix = query.getPath();
     int immediateChildrenPathLength = prefix.length() + 1;

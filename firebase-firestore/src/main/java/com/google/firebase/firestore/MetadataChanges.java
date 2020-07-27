@@ -14,13 +14,10 @@
 
 package com.google.firebase.firestore;
 
-import com.google.firebase.annotations.PublicApi;
-
 /**
- * Indicates whether metadata-only changes (i.e. only {@code DocumentSnapshot.getMetadata()} or
- * {@code Query.getMetadata()} changed) should trigger snapshot events.
+ * Indicates whether metadata-only changes (that is, only {@code DocumentSnapshot.getMetadata()} or
+ * {@code QuerySnapshot.getMetadata()} changed) should trigger snapshot events.
  */
-@PublicApi
 public enum MetadataChanges {
   EXCLUDE,
   INCLUDE

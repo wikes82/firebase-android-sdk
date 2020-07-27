@@ -16,7 +16,7 @@ package com.google.firebase.firestore.model;
 
 import static com.google.firebase.firestore.util.Assert.hardAssert;
 
-import android.support.annotation.NonNull;
+import androidx.annotation.NonNull;
 import com.google.firebase.database.collection.ImmutableSortedSet;
 import java.util.Collections;
 import java.util.Comparator;
@@ -45,6 +45,19 @@ public final class DocumentKey implements Comparable<DocumentKey> {
   /** Returns a document key for the empty path. */
   public static DocumentKey empty() {
     return fromSegments(Collections.emptyList());
+  }
+
+  /** Returns a DocumentKey from a fully qualified resource name. */
+  public static DocumentKey fromName(String name) {
+    ResourcePath resourceName = ResourcePath.fromString(name);
+    hardAssert(
+        resourceName.length() >= 4
+            && resourceName.getSegment(0).equals("projects")
+            && resourceName.getSegment(2).equals("databases")
+            && resourceName.getSegment(4).equals("documents"),
+        "Tried to parse an invalid key: %s",
+        resourceName);
+    return DocumentKey.fromPath(resourceName.popFirst(5));
   }
 
   /**
@@ -93,6 +106,11 @@ public final class DocumentKey implements Comparable<DocumentKey> {
   /** Returns the path of to the document */
   public ResourcePath getPath() {
     return path;
+  }
+
+  /** Returns true if the document is in the specified collectionId. */
+  public boolean hasCollectionId(String collectionId) {
+    return path.length() >= 2 && path.segments.get(path.length() - 2).equals(collectionId);
   }
 
   @Override

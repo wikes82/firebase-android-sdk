@@ -14,51 +14,39 @@
 
 package com.google.firebase.firestore;
 
-import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.firebase.firestore.util.Preconditions.checkNotNull;
 
-import android.support.annotation.NonNull;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import com.google.firebase.Timestamp;
-import com.google.firebase.annotations.PublicApi;
-import com.google.firebase.firestore.model.DatabaseId;
 import com.google.firebase.firestore.model.Document;
 import com.google.firebase.firestore.model.DocumentKey;
-import com.google.firebase.firestore.model.value.ArrayValue;
-import com.google.firebase.firestore.model.value.FieldValue;
-import com.google.firebase.firestore.model.value.FieldValueOptions;
-import com.google.firebase.firestore.model.value.ObjectValue;
-import com.google.firebase.firestore.model.value.ReferenceValue;
 import com.google.firebase.firestore.util.CustomClassMapper;
-import com.google.firebase.firestore.util.Logger;
-import java.util.ArrayList;
+import com.google.firestore.v1.Value;
 import java.util.Date;
-import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
-import javax.annotation.Nullable;
 
 /**
- * A DocumentSnapshot contains data read from a document in your Firestore database. The data can be
- * extracted with the getData() or get() methods.
+ * A {@code DocumentSnapshot} contains data read from a document in your Cloud Firestore database.
+ * The data can be extracted with the {@link #getData()} or {@link #get(String)} methods.
  *
- * <p>If the DocumentSnapshot points to a non-existing document, getData() and its corresponding
- * methods will return null. You can always explicitly check for a document's existence by calling
- * exists().
+ * <p>If the {@code DocumentSnapshot} points to a non-existing document, {@link #getData()} and its
+ * corresponding methods will return {@code null}. You can always explicitly check for a document's
+ * existence by calling {@link #exists()}.
  *
- * <p><b>Subclassing Note</b>: Firestore classes are not meant to be subclassed except for use in
- * test mocks. Subclassing is not supported in production code and new SDK releases may break code
- * that does so.
+ * <p><b>Subclassing Note</b>: Cloud Firestore classes are not meant to be subclassed except for use
+ * in test mocks. Subclassing is not supported in production code and new SDK releases may break
+ * code that does so.
  */
-@PublicApi
 public class DocumentSnapshot {
 
   /**
    * Controls the return value for server timestamps that have not yet been set to their final
    * value.
    */
-  @PublicApi
   public enum ServerTimestampBehavior {
     /**
-     * Return 'null' for {@link com.google.firebase.firestore.FieldValue#serverTimestamp
+     * Return {@code null} for {@link com.google.firebase.firestore.FieldValue#serverTimestamp
      * ServerTimestamps} that have not yet been set to their final value.
      */
     NONE,
@@ -84,7 +72,7 @@ public class DocumentSnapshot {
 
   private final DocumentKey key;
 
-  /** Is null if the document doesn't exist */
+  /** Is {@code null} if the document doesn't exist */
   private final @Nullable Document doc;
 
   private final SnapshotMetadata metadata;
@@ -113,20 +101,17 @@ public class DocumentSnapshot {
 
   /** @return The id of the document. */
   @NonNull
-  @PublicApi
   public String getId() {
     return key.getPath().getLastSegment();
   }
 
   /** @return The metadata for this document snapshot. */
   @NonNull
-  @PublicApi
   public SnapshotMetadata getMetadata() {
     return metadata;
   }
 
   /** @return true if the document existed in this snapshot. */
-  @PublicApi
   public boolean exists() {
     return doc != null;
   }
@@ -137,70 +122,69 @@ public class DocumentSnapshot {
   }
 
   /**
-   * Returns the fields of the document as a Map or null if the document doesn't exist. Field values
-   * will be converted to their native Java representation.
+   * Returns the fields of the document as a Map or {@code null} if the document doesn't exist.
+   * Field values will be converted to their native Java representation.
    *
-   * @return The fields of the document as a Map or null if the document doesn't exist.
+   * @return The fields of the document as a Map or {@code null} if the document doesn't exist.
    */
   @Nullable
-  @PublicApi
   public Map<String, Object> getData() {
     return getData(ServerTimestampBehavior.DEFAULT);
   }
 
   /**
-   * Returns the fields of the document as a Map or null if the document doesn't exist. Field values
-   * will be converted to their native Java representation.
+   * Returns the fields of the document as a Map or {@code null} if the document doesn't exist.
+   * Field values will be converted to their native Java representation.
    *
    * @param serverTimestampBehavior Configures the behavior for server timestamps that have not yet
    *     been set to their final value.
-   * @return The fields of the document as a Map or null if the document doesn't exist.
+   * @return The fields of the document as a Map or {@code null} if the document doesn't exist.
    */
   @Nullable
-  @PublicApi
   public Map<String, Object> getData(@NonNull ServerTimestampBehavior serverTimestampBehavior) {
     checkNotNull(
         serverTimestampBehavior, "Provided serverTimestampBehavior value must not be null.");
-    return doc == null
-        ? null
-        : convertObject(
-            doc.getData(),
-            FieldValueOptions.create(
-                serverTimestampBehavior,
-                firestore.getFirestoreSettings().areTimestampsInSnapshotsEnabled()));
+    UserDataWriter userDataWriter =
+        new UserDataWriter(
+            firestore,
+            firestore.getFirestoreSettings().areTimestampsInSnapshotsEnabled(),
+            serverTimestampBehavior);
+    return doc == null ? null : userDataWriter.convertObject(doc.getData().getFieldsMap());
   }
 
   /**
-   * Returns the contents of the document converted to a POJO or null if the document doesn't exist.
+   * Returns the contents of the document converted to a POJO or {@code null} if the document
+   * doesn't exist.
    *
    * @param valueType The Java class to create
-   * @return The contents of the document in an object of type T or null if the document doesn't
-   *     exist.
+   * @return The contents of the document in an object of type T or {@code null} if the document
+   *     doesn't exist.
    */
   @Nullable
-  @PublicApi
   public <T> T toObject(@NonNull Class<T> valueType) {
     return toObject(valueType, ServerTimestampBehavior.DEFAULT);
   }
 
   /**
-   * Returns the contents of the document converted to a POJO or null if the document doesn't exist.
+   * Returns the contents of the document converted to a POJO or {@code null} if the document
+   * doesn't exist.
    *
    * @param valueType The Java class to create
    * @param serverTimestampBehavior Configures the behavior for server timestamps that have not yet
    *     been set to their final value.
-   * @return The contents of the document in an object of type T or null if the document doesn't
-   *     exist.
+   * @return The contents of the document in an object of type T or {@code null} if the document
+   *     doesn't exist.
    */
   @Nullable
-  @PublicApi
   public <T> T toObject(
       @NonNull Class<T> valueType, @NonNull ServerTimestampBehavior serverTimestampBehavior) {
     checkNotNull(valueType, "Provided POJO type must not be null.");
     checkNotNull(
         serverTimestampBehavior, "Provided serverTimestampBehavior value must not be null.");
     Map<String, Object> data = getData(serverTimestampBehavior);
-    return data == null ? null : CustomClassMapper.convertToCustomClass(data, valueType);
+    return data == null
+        ? null
+        : CustomClassMapper.convertToCustomClass(data, valueType, getReference());
   }
 
   /**
@@ -210,7 +194,6 @@ public class DocumentSnapshot {
    * @param field the path to the field.
    * @return true iff the field exists.
    */
-  @PublicApi
   public boolean contains(@NonNull String field) {
     return contains(FieldPath.fromDotSeparatedPath(field));
   }
@@ -222,61 +205,56 @@ public class DocumentSnapshot {
    * @param fieldPath the path to the field.
    * @return true iff the field exists.
    */
-  @PublicApi
   public boolean contains(@NonNull FieldPath fieldPath) {
     checkNotNull(fieldPath, "Provided field path must not be null.");
     return (doc != null) && (doc.getField(fieldPath.getInternalPath()) != null);
   }
 
   /**
-   * Returns the value at the field or null if the field doesn't exist.
+   * Returns the value at the field or {@code null} if the field doesn't exist.
    *
    * @param field The path to the field
-   * @return The value at the given field or null.
+   * @return The value at the given field or {@code null}.
    */
   @Nullable
-  @PublicApi
   public Object get(@NonNull String field) {
     return get(FieldPath.fromDotSeparatedPath(field), ServerTimestampBehavior.DEFAULT);
   }
 
   /**
-   * Returns the value at the field or null if the field doesn't exist.
+   * Returns the value at the field or {@code null} if the field doesn't exist.
    *
    * @param field The path to the field
    * @param serverTimestampBehavior Configures the behavior for server timestamps that have not yet
    *     been set to their final value.
-   * @return The value at the given field or null.
+   * @return The value at the given field or {@code null}.
    */
   @Nullable
-  @PublicApi
   public Object get(
       @NonNull String field, @NonNull ServerTimestampBehavior serverTimestampBehavior) {
     return get(FieldPath.fromDotSeparatedPath(field), serverTimestampBehavior);
   }
 
   /**
-   * Returns the value at the field or null if the field or document doesn't exist.
+   * Returns the value at the field or {@code null} if the field or document doesn't exist.
    *
    * @param fieldPath The path to the field
-   * @return The value at the given field or null.
+   * @return The value at the given field or {@code null}.
    */
   @Nullable
-  @PublicApi
   public Object get(@NonNull FieldPath fieldPath) {
     return get(fieldPath, ServerTimestampBehavior.DEFAULT);
   }
 
   /**
-   * Returns the value at the field or null if the field or document doesn't exist.
+   * Returns the value at the field or {@code null} if the field or document doesn't exist.
    *
    * @param fieldPath The path to the field
    * @param serverTimestampBehavior Configures the behavior for server timestamps that have not yet
    *     been set to their final value.
-   * @return The value at the given field or null.
+   * @return The value at the given field or {@code null}.
    */
   @Nullable
-  @PublicApi
   public Object get(
       @NonNull FieldPath fieldPath, @NonNull ServerTimestampBehavior serverTimestampBehavior) {
     checkNotNull(fieldPath, "Provided field path must not be null.");
@@ -284,18 +262,17 @@ public class DocumentSnapshot {
         serverTimestampBehavior, "Provided serverTimestampBehavior value must not be null.");
     return getInternal(
         fieldPath.getInternalPath(),
-        FieldValueOptions.create(
-            serverTimestampBehavior,
-            firestore.getFirestoreSettings().areTimestampsInSnapshotsEnabled()));
+        serverTimestampBehavior,
+        firestore.getFirestoreSettings().areTimestampsInSnapshotsEnabled());
   }
 
   /**
-   * Returns the value at the field, converted to a POJO, or null if the field or document doesn't
-   * exist.
+   * Returns the value at the field, converted to a POJO, or {@code null} if the field or document
+   * doesn't exist.
    *
    * @param field The path to the field
    * @param valueType The Java class to convert the field value to.
-   * @return The value at the given field or null.
+   * @return The value at the given field or {@code null}.
    */
   @Nullable
   public <T> T get(@NonNull String field, @NonNull Class<T> valueType) {
@@ -303,14 +280,14 @@ public class DocumentSnapshot {
   }
 
   /**
-   * Returns the value at the field, converted to a POJO, or null if the field or document doesn't
-   * exist.
+   * Returns the value at the field, converted to a POJO, or {@code null} if the field or document
+   * doesn't exist.
    *
    * @param field The path to the field
    * @param valueType The Java class to convert the field value to.
    * @param serverTimestampBehavior Configures the behavior for server timestamps that have not yet
    *     been set to their final value.
-   * @return The value at the given field or null.
+   * @return The value at the given field or {@code null}.
    */
   @Nullable
   public <T> T get(
@@ -321,12 +298,12 @@ public class DocumentSnapshot {
   }
 
   /**
-   * Returns the value at the field, converted to a POJO, or null if the field or document doesn't
-   * exist.
+   * Returns the value at the field, converted to a POJO, or {@code null} if the field or document
+   * doesn't exist.
    *
    * @param fieldPath The path to the field
    * @param valueType The Java class to convert the field value to.
-   * @return The value at the given field or null.
+   * @return The value at the given field or {@code null}.
    */
   @Nullable
   public <T> T get(@NonNull FieldPath fieldPath, @NonNull Class<T> valueType) {
@@ -334,14 +311,14 @@ public class DocumentSnapshot {
   }
 
   /**
-   * Returns the value at the field, converted to a POJO, or null if the field or document doesn't
-   * exist.
+   * Returns the value at the field, converted to a POJO, or {@code null} if the field or document
+   * doesn't exist.
    *
    * @param fieldPath The path to the field
    * @param valueType The Java class to convert the field value to.
    * @param serverTimestampBehavior Configures the behavior for server timestamps that have not yet
    *     been set to their final value.
-   * @return The value at the given field or null.
+   * @return The value at the given field or {@code null}.
    */
   @Nullable
   public <T> T get(
@@ -349,7 +326,9 @@ public class DocumentSnapshot {
       @NonNull Class<T> valueType,
       @NonNull ServerTimestampBehavior serverTimestampBehavior) {
     Object data = get(fieldPath, serverTimestampBehavior);
-    return data == null ? null : CustomClassMapper.convertToCustomClass(data, valueType);
+    return data == null
+        ? null
+        : CustomClassMapper.convertToCustomClass(data, valueType, getReference());
   }
 
   /**
@@ -360,7 +339,6 @@ public class DocumentSnapshot {
    * @return The value of the field
    */
   @Nullable
-  @PublicApi
   public Boolean getBoolean(@NonNull String field) {
     return getTypedValue(field, Boolean.class);
   }
@@ -373,7 +351,6 @@ public class DocumentSnapshot {
    * @return The value of the field
    */
   @Nullable
-  @PublicApi
   public Double getDouble(@NonNull String field) {
     Number val = getTypedValue(field, Number.class);
     return val != null ? val.doubleValue() : null;
@@ -387,7 +364,6 @@ public class DocumentSnapshot {
    * @return The value of the field
    */
   @Nullable
-  @PublicApi
   public String getString(@NonNull String field) {
     return getTypedValue(field, String.class);
   }
@@ -400,7 +376,6 @@ public class DocumentSnapshot {
    * @return The value of the field
    */
   @Nullable
-  @PublicApi
   public Long getLong(@NonNull String field) {
     Number val = getTypedValue(field, Number.class);
     return val != null ? val.longValue() : null;
@@ -414,7 +389,6 @@ public class DocumentSnapshot {
    * @return The value of the field
    */
   @Nullable
-  @PublicApi
   public Date getDate(@NonNull String field) {
     return getDate(field, ServerTimestampBehavior.DEFAULT);
   }
@@ -432,7 +406,6 @@ public class DocumentSnapshot {
    * @return The value of the field
    */
   @Nullable
-  @PublicApi
   public Date getDate(
       @NonNull String field, @NonNull ServerTimestampBehavior serverTimestampBehavior) {
     checkNotNull(field, "Provided field path must not be null.");
@@ -441,13 +414,13 @@ public class DocumentSnapshot {
     Object maybeDate =
         getInternal(
             FieldPath.fromDotSeparatedPath(field).getInternalPath(),
-            FieldValueOptions.create(
-                serverTimestampBehavior, /*timestampsInSnapshotsEnabled=*/ false));
+            serverTimestampBehavior,
+            /* timestampsInSnapshots= */ false);
     return castTypedValue(maybeDate, field, Date.class);
   }
 
   /**
-   * Returns the value of the field as a {@link com.google.firebase.Timestamp}.
+   * Returns the value of the field as a {@code com.google.firebase.Timestamp}.
    *
    * <p>This method ignores the global setting {@link
    * FirebaseFirestoreSettings#areTimestampsInSnapshotsEnabled}.
@@ -457,13 +430,12 @@ public class DocumentSnapshot {
    * @return The value of the field
    */
   @Nullable
-  @PublicApi
   public Timestamp getTimestamp(@NonNull String field) {
     return getTimestamp(field, ServerTimestampBehavior.DEFAULT);
   }
 
   /**
-   * Returns the value of the field as a {@link com.google.firebase.Timestamp}.
+   * Returns the value of the field as a {@code com.google.firebase.Timestamp}.
    *
    * <p>This method ignores the global setting {@link
    * FirebaseFirestoreSettings#areTimestampsInSnapshotsEnabled}.
@@ -475,7 +447,6 @@ public class DocumentSnapshot {
    * @return The value of the field
    */
   @Nullable
-  @PublicApi
   public Timestamp getTimestamp(
       @NonNull String field, @NonNull ServerTimestampBehavior serverTimestampBehavior) {
     checkNotNull(field, "Provided field path must not be null.");
@@ -484,8 +455,8 @@ public class DocumentSnapshot {
     Object maybeTimestamp =
         getInternal(
             FieldPath.fromDotSeparatedPath(field).getInternalPath(),
-            FieldValueOptions.create(
-                serverTimestampBehavior, /*timestampsInSnapshotsEnabled=*/ true));
+            serverTimestampBehavior,
+            /* timestampsInSnapshots= */ true);
     return castTypedValue(maybeTimestamp, field, Timestamp.class);
   }
 
@@ -497,7 +468,6 @@ public class DocumentSnapshot {
    * @return The value of the field
    */
   @Nullable
-  @PublicApi
   public Blob getBlob(@NonNull String field) {
     return getTypedValue(field, Blob.class);
   }
@@ -510,7 +480,6 @@ public class DocumentSnapshot {
    * @return The value of the field
    */
   @Nullable
-  @PublicApi
   public GeoPoint getGeoPoint(@NonNull String field) {
     return getTypedValue(field, GeoPoint.class);
   }
@@ -523,7 +492,6 @@ public class DocumentSnapshot {
    * @return The value of the field
    */
   @Nullable
-  @PublicApi
   public DocumentReference getDocumentReference(@NonNull String field) {
     return getTypedValue(field, DocumentReference.class);
   }
@@ -534,7 +502,6 @@ public class DocumentSnapshot {
    * @return The reference to the document.
    */
   @NonNull
-  @PublicApi
   public DocumentReference getReference() {
     return new DocumentReference(key, firestore);
   }
@@ -557,59 +524,16 @@ public class DocumentSnapshot {
   }
 
   @Nullable
-  private Object convertValue(FieldValue value, FieldValueOptions options) {
-    if (value instanceof ObjectValue) {
-      return convertObject((ObjectValue) value, options);
-    } else if (value instanceof ArrayValue) {
-      return convertArray((ArrayValue) value, options);
-    } else if (value instanceof ReferenceValue) {
-      ReferenceValue referenceValue = (ReferenceValue) value;
-      DocumentKey key = (DocumentKey) referenceValue.value(options);
-      DatabaseId refDatabase = ((ReferenceValue) value).getDatabaseId();
-      DatabaseId database = this.firestore.getDatabaseId();
-      if (!refDatabase.equals(database)) {
-        // TODO: Somehow support foreign references.
-        Logger.warn(
-            "DocumentSnapshot",
-            "Document %s contains a document reference within a different database "
-                + "(%s/%s) which is not supported. It will be treated as a reference in "
-                + "the current database (%s/%s) instead.",
-            key.getPath(),
-            refDatabase.getProjectId(),
-            refDatabase.getDatabaseId(),
-            database.getProjectId(),
-            database.getDatabaseId());
-      }
-      return new DocumentReference(key, firestore);
-    } else {
-      return value.value(options);
-    }
-  }
-
-  private Map<String, Object> convertObject(ObjectValue objectValue, FieldValueOptions options) {
-    Map<String, Object> result = new HashMap<>();
-    for (Map.Entry<String, FieldValue> entry : objectValue.getInternalValue()) {
-      result.put(entry.getKey(), convertValue(entry.getValue(), options));
-    }
-    return result;
-  }
-
-  private List<Object> convertArray(ArrayValue arrayValue, FieldValueOptions options) {
-    ArrayList<Object> result = new ArrayList<>(arrayValue.getInternalValue().size());
-    for (FieldValue v : arrayValue.getInternalValue()) {
-      result.add(convertValue(v, options));
-    }
-    return result;
-  }
-
-  @Nullable
   private Object getInternal(
       @NonNull com.google.firebase.firestore.model.FieldPath fieldPath,
-      @NonNull FieldValueOptions options) {
+      @NonNull ServerTimestampBehavior serverTimestampBehavior,
+      boolean timestampsInSnapshots) {
     if (doc != null) {
-      FieldValue val = doc.getField(fieldPath);
+      Value val = doc.getField(fieldPath);
       if (val != null) {
-        return convertValue(val, options);
+        UserDataWriter userDataWriter =
+            new UserDataWriter(firestore, timestampsInSnapshots, serverTimestampBehavior);
+        return userDataWriter.convertValue(val);
       }
     }
     return null;
